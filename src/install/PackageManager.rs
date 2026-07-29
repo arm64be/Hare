@@ -570,8 +570,7 @@ impl WorkspaceFilter {
         })
     }
 
-    /// Every workspace (including root) in `lockfile`, optionally filtered by
-    /// `filter_patterns` (empty = all). Shared by `outdated`/`update -i`/`update -r`.
+    /// Every workspace (root included), filtered by `filter_patterns` (empty = all).
     pub fn select_workspaces(
         lockfile: &crate::Lockfile,
         filter_patterns: &[&[u8]],
