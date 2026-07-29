@@ -1393,7 +1393,7 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
 
 #[cold]
 #[inline(never)]
-fn report_lockfile_load_error(
+pub(crate) fn report_lockfile_load_error(
     manager: &mut PackageManager,
     cause: &lockfile::LoadResultErr,
     log_level: Options::LogLevel,
