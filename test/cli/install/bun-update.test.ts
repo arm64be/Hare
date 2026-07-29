@@ -736,6 +736,115 @@ it("--recursive preserves a workspace member's catalog: reference", async () => 
   expect(root.catalog.baz).toBe("^0.0.3");
 });
 
+// `--filter` excluding root must not touch the root package.json (catalogs included),
+// so the lockfile stays consistent with the on-disk root.
+it("--filter excluding root leaves root (and its catalog) untouched", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
+
+  const rootJson = JSON.stringify({
+    name: "root",
+    private: true,
+    workspaces: ["packages/*"],
+    catalog: { baz: "^0.0.3" },
+    dependencies: { baz: "^0.0.3" },
+  });
+  await writeFile(join(package_dir, "package.json"), rootJson);
+  await mkdir(join(package_dir, "packages", "pkg-a"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "pkg-a", "package.json"),
+    JSON.stringify({ name: "pkg-a", dependencies: { baz: "catalog:" } }),
+  );
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stderr).text()).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--filter", "pkg-a", "--latest", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await new Response(stderr).text()).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  // Root is not a `--filter pkg-a` target; nothing in its package.json changes.
+  expect(await file(join(package_dir, "package.json")).text()).toBe(rootJson);
+  expect((await file(join(package_dir, "packages", "pkg-a", "package.json")).json()).dependencies.baz).toBe("catalog:");
+
+  // A subsequent frozen-lockfile install must pass (no catalog drift vs. lockfile).
+  const frozen = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await new Response(frozen.stderr).text()).not.toContain("error:");
+  expect(await frozen.exited).toBe(0);
+});
+
+// `-r` from inside a member must write root's catalog and direct deps in one
+// pass (the member-commit path carries both).
+it("--recursive --latest from a member updates root's catalog and direct deps together", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      catalog: { baz: "^0.0.3" },
+      dependencies: { baz: "^0.0.3" },
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "pkg-a"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "pkg-a", "package.json"),
+    JSON.stringify({ name: "pkg-a", dependencies: { baz: "catalog:" } }),
+  );
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stderr).text()).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--recursive", "--latest", "--linker=hoisted"],
+    cwd: join(package_dir, "packages", "pkg-a"),
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await new Response(stderr).text()).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  const root = await file(join(package_dir, "package.json")).json();
+  const a = await file(join(package_dir, "packages", "pkg-a", "package.json")).json();
+  expect(root.dependencies.baz).toBe("^0.0.5");
+  expect(root.catalog.baz).toBe("^0.0.5");
+  expect(a.dependencies.baz).toBe("catalog:");
+});
+
 // https://github.com/oven-sh/bun/issues/33176
 it("--filter with a path targets only the matching workspace", async () => {
   const urls: string[] = [];

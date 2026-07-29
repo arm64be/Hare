@@ -563,7 +563,10 @@ fn update_package_json_and_install_with_manager_with_updates(
             );
         }
 
-        if subcommand == Subcommand::Update && manager.update_requests.is_empty() {
+        if subcommand == Subcommand::Update
+            && manager.update_requests.is_empty()
+            && plan.root_in_target
+        {
             let root_package_json_root: bun_ast::Expr = root_package_json.root;
             if PackageJSONEditor::edit_catalogs_before_update(manager, &root_package_json_root)? {
                 editing_catalogs = true;
@@ -702,6 +705,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     if editing_catalogs
         && manager.workspace_name_hash.is_some()
+        && !plan.root_as_member
         && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
     {
         // running from a workspace: catalogs live in the root package.json (a separate file).
@@ -911,6 +915,10 @@ struct WorkspaceUpdatePlan {
     members: Vec<MemberUpdate>,
     /// Whether the cwd/root workspace is itself a target of this update.
     cwd_in_target: bool,
+    /// Whether the monorepo root is a target (catalogs live there).
+    root_in_target: bool,
+    /// Whether the monorepo root is in `members` (running from a non-root cwd).
+    root_as_member: bool,
 }
 
 impl WorkspaceUpdatePlan {
@@ -918,6 +926,8 @@ impl WorkspaceUpdatePlan {
         Self {
             members: Vec::new(),
             cwd_in_target: true,
+            root_in_target: true,
+            root_as_member: false,
         }
     }
 }
@@ -978,19 +988,25 @@ fn prepare_workspace_update_plan(
     ));
 
     let mut cwd_in_target = false;
+    let mut root_in_target = false;
+    let mut root_as_member = false;
     let mut members: Vec<MemberUpdate> = Vec::new();
     for &pkg_id in &selected {
+        let res_tag = manager.lockfile.packages.items_resolution()[pkg_id as usize].tag;
+        if res_tag == resolution::Tag::Root {
+            root_in_target = true;
+        }
         if pkg_id == cwd_pkg_id {
             // The cwd/root package.json is edited by the main flow.
             cwd_in_target = true;
             continue;
         }
 
-        let res_tag = manager.lockfile.packages.items_resolution()[pkg_id as usize].tag;
         // `None` = root workspace (per `get_workspace_package_id`); only members carry a hash.
         let name_hash: Option<PackageNameHash> = if res_tag == resolution::Tag::Workspace {
             Some(manager.lockfile.packages.items_name_hash()[pkg_id as usize])
         } else {
+            root_as_member = true;
             None
         };
         let rel: Box<[u8]> = if res_tag == resolution::Tag::Workspace {
@@ -1021,6 +1037,8 @@ fn prepare_workspace_update_plan(
     Ok(WorkspaceUpdatePlan {
         members,
         cwd_in_target,
+        root_in_target,
+        root_as_member,
     })
 }
 
@@ -1222,6 +1240,18 @@ fn commit_workspace_member_update(
             ..Default::default()
         },
     )?;
+
+    if member.name_hash.is_none() {
+        // Root as a fanned-out member: apply catalog resolutions here so the write carries them.
+        let _ = PackageJSONEditor::edit_catalogs_after_update(
+            manager,
+            &ast,
+            EditOptions {
+                exact_versions: manager.options.enable.exact_versions(),
+                ..Default::default()
+            },
+        )?;
+    }
 
     let new_source = print_package_json(
         &source,
