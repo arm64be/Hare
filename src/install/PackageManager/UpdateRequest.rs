@@ -70,10 +70,12 @@ fn anchor_cli_bytes(b: Box<[u8]>) -> &'static [u8] {
 }
 
 impl UpdateRequest {
-    /// Is `name_hash` one of the `bun update <name>` targets? `false` for a bare `bun update`.
+    /// Is `name` one of the `bun update <name>` targets? `false` for a bare `bun update`.
     #[inline]
-    pub fn contains_name_hash(requests: &[UpdateRequest], name_hash: PackageNameHash) -> bool {
-        requests.iter().any(|r| r.name_hash == name_hash)
+    pub fn contains_name(requests: &[UpdateRequest], name_hash: PackageNameHash, name: &[u8]) -> bool {
+        requests
+            .iter()
+            .any(|r| r.name_hash == name_hash && r.name == name)
     }
 
     /// Borrow the backing string buffer.

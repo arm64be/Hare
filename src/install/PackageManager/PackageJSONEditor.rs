@@ -242,10 +242,27 @@ pub fn edit_trusted_dependencies(
 /// versions.
 pub(crate) fn edit_update_no_args(
     manager: &mut PackageManager,
-    // Per-workspace scratch: cwd passes `manager.updating_packages`, each member a fresh map.
+    current_package_json: &mut Expr,
+    options: EditOptions,
+) -> Result<(), bun_alloc::AllocError> {
+    edit_update_no_args_in(
+        &manager.lockfile,
+        &manager.ast_arena,
+        &mut manager.updating_packages,
+        manager.workspace_name_hash,
+        manager.options.do_.contains(Do::UPDATE_TO_LATEST),
+        current_package_json,
+        options,
+    )
+}
+
+/// Split-borrow variant: callers holding a `&mut` to another `PackageManager` field can use this.
+pub(crate) fn edit_update_no_args_in(
+    lockfile: &crate::Lockfile,
+    arena: &bun_alloc::Arena,
     updating_packages: &mut StringArrayHashMap<PackageUpdateInfo>,
-    // Which workspace's resolutions to read back post-install. `None` = root.
     workspace_name_hash: Option<PackageNameHash>,
+    update_to_latest: bool,
     current_package_json: &mut Expr,
     options: EditOptions,
 ) -> Result<(), bun_alloc::AllocError> {
@@ -253,10 +270,6 @@ pub(crate) fn edit_update_no_args(
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
     let _guard = ExprDisabler::scope();
-
-    // Process-lifetime arena for AST
-    // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
-    let arena = &manager.ast_arena;
 
     for group in DEPENDENCY_GROUPS {
         let group_str = group.prop;
@@ -290,7 +303,7 @@ pub(crate) fn edit_update_no_args(
                         // npm versions only (and dist-tags with --latest); `catalog:` is handled by edit_catalogs_*.
                         if tag != dependency::Tag::Npm
                             && (tag != dependency::Tag::DistTag
-                                || !manager.options.do_.contains(Do::UPDATE_TO_LATEST))
+                                || !update_to_latest)
                         {
                             continue;
                         }
@@ -307,7 +320,7 @@ pub(crate) fn edit_update_no_args(
                                 tag = dependency::Tag::infer(&version_literal[at_index + 1..]);
                                 if tag != dependency::Tag::Npm
                                     && (tag != dependency::Tag::DistTag
-                                        || !manager.options.do_.contains(Do::UPDATE_TO_LATEST))
+                                        || !update_to_latest)
                                 {
                                     continue;
                                 }
@@ -335,7 +348,7 @@ pub(crate) fn edit_update_no_args(
                             original_version: None,
                         };
 
-                        if manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
+                        if update_to_latest {
                             // is it an aliased package
                             let temp_version: &[u8] = if let Some(at_index) = alias_at_index {
                                 let mut v = Vec::new();
@@ -358,7 +371,7 @@ pub(crate) fn edit_update_no_args(
                         }
                     }
                 } else {
-                    let lockfile = &*manager.lockfile;
+                    let lockfile = lockfile;
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
                     let workspace_package_id =
                         lockfile.get_workspace_package_id(workspace_name_hash);
@@ -404,7 +417,9 @@ pub(crate) fn edit_update_no_args(
                         'updated: {
                             // fetchSwapRemove because we want to update the first dependency with a matching
                             // name, or none at all
-                            if let Some(entry) = updating_packages.fetch_swap_remove(key_str) {
+                            if let Some(entry) =
+                                updating_packages.fetch_swap_remove(key_str)
+                            {
                                 let is_alias = entry.value.is_alias;
                                 let dep_name = &*entry.key;
                                 debug_assert_eq!(
@@ -434,7 +449,7 @@ pub(crate) fn edit_update_no_args(
                                     if let Some(npm_version) = resolved_version.try_npm() {
                                         // It's possible we inserted a dependency that won't update (version is an exact version).
                                         // If we find one, skip to keep the original version literal.
-                                        if !manager.options.do_.contains(Do::UPDATE_TO_LATEST)
+                                        if !update_to_latest
                                             && npm_version.version.is_exact()
                                         {
                                             break 'updated;

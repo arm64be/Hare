@@ -1968,19 +1968,29 @@ fn get_or_put_resolved_package_with_find_result(
     install_peer: bool,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
-    // reshaped for borrowck — `is_update_target_dependency(&self, &mut PackageManager, …)`
+    // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
     // borrows `this.lockfile` and `this` at once. Split via raw root.
     let should_update = this.to_update
-        && if this.update_requests.is_empty() {
-            // Bare `bun update`: targeted workspace(s)' direct deps (cwd, or the `-r`/`--filter` set).
-            let this_ptr: *mut PackageManager = this;
-            // SAFETY: `is_update_target_dependency` reads `manager.root_package_id` /
-            // `manager.update_workspace_name_hashes` only — disjoint from `manager.lockfile`.
-            unsafe { &*(*this_ptr).lockfile }
-                .is_update_target_dependency(unsafe { &mut *this_ptr }, dependency_id)
-        } else {
+        && if !this.update_requests.is_empty() {
             // `bun update <name>`: every `<name>` slot, else other resolutions stay pinned.
-            UpdateRequest::contains_name_hash(&this.update_requests, dependency.name_hash)
+            UpdateRequest::contains_name(
+                &this.update_requests,
+                dependency.name_hash,
+                dependency
+                    .name
+                    .slice(this.lockfile.buffers.string_bytes.as_slice()),
+            )
+        } else if let Some(targets) = this.update_target_workspaces.as_deref() {
+            // `bun update -r`/`--filter`: direct deps of the selected workspaces.
+            this.lockfile.is_dependency_of_workspace_in(targets, dependency_id)
+        } else {
+            // Bare `bun update`: direct deps of the cwd workspace.
+            let this_ptr: *mut PackageManager = this;
+            // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
+            // `manager.workspace_package_json_cache` only — disjoint from
+            // `manager.lockfile`.
+            unsafe { &*(*this_ptr).lockfile }
+                .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
         };
 
     // Was this package already allocated? Let's reuse the existing one.
@@ -2368,6 +2378,16 @@ fn get_or_put_resolved_package(
             };
             let manifest: &Npm::PackageManifest = manifest;
 
+            // `bun update -r/--filter --latest`: resolve targeted workspaces' npm deps by dist-tag `latest`.
+            let latest_for_target = version.tag == dependency::version::Tag::Npm
+                && this.to_update
+                && this.update_requests.is_empty()
+                && this.options.do_.contains(crate::package_manager::options::Do::UPDATE_TO_LATEST)
+                && this
+                    .update_target_workspaces
+                    .as_deref()
+                    .is_some_and(|t| this.lockfile.is_dependency_of_workspace_in(t, dependency_id));
+
             let version_result: Npm::FindVersionResult = match version.tag {
                 // SAFETY: `version.tag` discriminates the union arm.
                 dependency::version::Tag::DistTag => manifest.find_by_dist_tag_with_filter(
@@ -2375,6 +2395,12 @@ fn get_or_put_resolved_package(
                     this.options.minimum_release_age_ms,
                     this.options.minimum_release_age_excludes,
                 ),
+                dependency::version::Tag::Npm if latest_for_target => manifest
+                    .find_by_dist_tag_with_filter(
+                        b"latest",
+                        this.options.minimum_release_age_ms,
+                        this.options.minimum_release_age_excludes,
+                    ),
                 dependency::version::Tag::Npm => manifest.find_best_version_with_filter(
                     &version.npm().version,
                     this.lockfile.buffers.string_bytes.as_slice(),

@@ -1,5 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_collections::{StringArrayHashMap, VecExt};
+use bun_collections::VecExt;
 use core::fmt;
 use std::borrow::Cow;
 
@@ -9,9 +9,6 @@ use crate::Error;
 use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
 use crate::bun_json as json;
-use crate::package_manager::WorkspaceFilter;
-use crate::{PackageID, PackageNameHash, lockfile, resolution};
-use bun_ast::Indentation;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
@@ -22,7 +19,7 @@ use super::command_line_arguments::CommandLineArguments;
 use super::package_json_editor as PackageJSONEditor;
 use super::update_request::Array as UpdateRequestArray;
 use super::{
-    Command, PackageManager, PackageUpdateInfo, PatchCommitResult, Subcommand, UpdateRequest,
+    Command, PackageManager, PatchCommitResult, Subcommand, UpdateRequest, WorkspaceFilter,
     attempt_to_create_package_json, install_with_manager, patch_package,
 };
 
@@ -155,12 +152,30 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::crash();
     }
 
-    // `bun update -r`/`--filter` (no names): fan out to members; cwd handled via `cwd_in_target`.
-    let mut plan = if subcommand == Subcommand::Update && updates.is_empty() {
-        prepare_workspace_update_plan(manager, original_cwd)?
-    } else {
-        WorkspaceUpdatePlan::cwd_only()
-    };
+    if subcommand == Subcommand::Update
+        && updates.is_empty()
+        && (manager.options.do_.recursive() || !manager.options.filter_patterns.is_empty())
+        && manager.options.do_.load_lockfile()
+        && matches!(
+            manager.load_lockfile_from_cwd::<false>(),
+            crate::lockfile::LoadResult::Ok(_)
+        )
+    {
+        let selected = WorkspaceFilter::select_workspaces(
+            &manager.lockfile,
+            manager.options.filter_patterns,
+            original_cwd,
+        );
+        let name_hashes = manager.lockfile.packages.items_name_hash();
+        let names = manager.lockfile.packages.items_name();
+        let sbuf = manager.lockfile.buffers.string_bytes.as_slice();
+        manager.update_target_workspaces = Some(
+            selected
+                .iter()
+                .map(|&id| (name_hashes[id as usize], Box::from(names[id as usize].slice(sbuf))))
+                .collect(),
+        );
+    }
 
     // reshaped for borrowck — `get_with_path` returns `&mut MapEntry`
     // borrowed from `manager.workspace_package_json_cache`, but we then need
@@ -362,22 +377,16 @@ fn update_package_json_and_install_with_manager_with_updates(
                 // `edit` may shrink the slice.
                 let new_len = updates_slice.len();
                 updates.truncate(new_len);
-            } else if subcommand == Subcommand::Update && plan.cwd_in_target {
-                let mut updating = core::mem::take(&mut manager.updating_packages);
-                let ws_hash = manager.workspace_name_hash;
-                let res = PackageJSONEditor::edit_update_no_args(
+            } else if subcommand == Subcommand::Update && manager.update_target_workspaces.is_none() {
+                PackageJSONEditor::edit_update_no_args(
                     manager,
-                    &mut updating,
-                    ws_hash,
                     &mut current_package_json_root,
                     EditOptions {
                         exact_versions: true,
                         before_install: true,
                         ..Default::default()
                     },
-                );
-                manager.updating_packages = updating;
-                res?;
+                )?;
             }
         }
         _ => {
@@ -562,10 +571,14 @@ fn update_package_json_and_install_with_manager_with_updates(
             );
         }
 
-        if subcommand == Subcommand::Update
-            && manager.update_requests.is_empty()
-            && plan.root_in_target
-        {
+        let root_is_targeted = manager.update_target_workspaces.as_deref().is_none_or(|t| {
+            let h = manager.lockfile.packages.items_name_hash()[0];
+            let n = manager.lockfile.packages.items_name()[0]
+                .slice(manager.lockfile.buffers.string_bytes.as_slice());
+            t.iter().any(|(th, tn)| *th == h && &**tn == n)
+        });
+
+        if subcommand == Subcommand::Update && manager.update_requests.is_empty() && root_is_targeted {
             let root_package_json_root: bun_ast::Expr = root_package_json.root;
             if PackageJSONEditor::edit_catalogs_before_update(manager, &root_package_json_root)? {
                 editing_catalogs = true;
@@ -627,24 +640,21 @@ fn update_package_json_and_install_with_manager_with_updates(
             };
 
         if updates.is_empty() {
-            if plan.cwd_in_target {
-                let mut updating = core::mem::take(&mut manager.updating_packages);
-                let ws_hash = manager.workspace_name_hash;
-                let res = PackageJSONEditor::edit_update_no_args(
+            if manager.update_target_workspaces.is_none() {
+                PackageJSONEditor::edit_update_no_args(
                     manager,
-                    &mut updating,
-                    ws_hash,
                     &mut new_package_json,
                     EditOptions {
                         exact_versions: manager.options.enable.exact_versions(),
                         ..Default::default()
                     },
-                );
-                manager.updating_packages = updating;
-                res?;
+                )?;
             }
 
-            if editing_catalogs && manager.workspace_name_hash.is_none() {
+            if editing_catalogs
+                && manager.workspace_name_hash.is_none()
+                && manager.update_target_workspaces.is_none()
+            {
                 // running from root: catalogs live in this file.
                 let _ = PackageJSONEditor::edit_catalogs_after_update(
                     manager,
@@ -703,11 +713,10 @@ fn update_package_json_and_install_with_manager_with_updates(
     }
 
     if editing_catalogs
-        && manager.workspace_name_hash.is_some()
-        && !plan.root_as_member
+        && (manager.workspace_name_hash.is_some() || manager.update_target_workspaces.is_some())
         && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
     {
-        // running from a workspace: catalogs live in the root package.json (a separate file).
+        // running from a workspace, or with -r/--filter: catalogs live in the root package.json.
         let root_package_json_ptr: *mut MapEntry =
             match manager.workspace_package_json_cache.get_with_path(
                 manager.log_mut(),
@@ -754,26 +763,33 @@ fn update_package_json_and_install_with_manager_with_updates(
         if root_catalogs_changed {
             print_package_json_into_cache_entry(root_package_json, root_package_json_root);
 
-            let root_package_json_file =
-                File::openat(Fd::cwd(), root_package_json_path, bun_sys::O::RDWR, 0)
+            // the targets loop below writes root (with deps + catalogs) in one pass.
+            if manager.update_target_workspaces.is_none() {
+                let root_package_json_file =
+                    File::openat(Fd::cwd(), root_package_json_path, bun_sys::O::RDWR, 0)
+                        .map_err(Error::from)?;
+                root_package_json_file
+                    .pwrite_all(&root_package_json.source.contents, 0)
                     .map_err(Error::from)?;
-            root_package_json_file
-                .pwrite_all(&root_package_json.source.contents, 0)
-                .map_err(Error::from)?;
-            let _ = bun_sys::ftruncate(
-                root_package_json_file.handle,
-                root_package_json.source.contents.len() as i64,
-            );
-            let _ = root_package_json_file.close(); // close error is non-actionable
+                let _ = bun_sys::ftruncate(
+                    root_package_json_file.handle,
+                    root_package_json.source.contents.len() as i64,
+                );
+                let _ = root_package_json_file.close(); // close error is non-actionable
+            }
         }
     }
 
     let _ = written;
 
-    // Skip cwd write when `--filter` didn't select it; always true for default/`-r`.
-    if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
-        && (plan.cwd_in_target || subcommand != Subcommand::Update)
-    {
+    if let Some(targets) = manager.update_target_workspaces.take() {
+        if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
+            write_resolved_versions_to_targets(manager, &targets)?;
+        }
+        return Ok(());
+    }
+
+    if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
         let (source, path): (&[u8], &ZStr) =
             if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
                 'source_and_path: {
@@ -899,320 +915,85 @@ fn update_package_json_and_install_with_manager_with_updates(
         }
     }
 
-    if subcommand == Subcommand::Update && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
-        for member in plan.members.iter_mut() {
-            commit_workspace_member_update(manager, member)?;
-        }
-    }
-
     Ok(())
 }
 
-/// Fan-out plan for `bun update -r`/`--filter`.
-struct WorkspaceUpdatePlan {
-    /// Members other than the cwd/root workspace (which the main flow edits).
-    members: Vec<MemberUpdate>,
-    /// Whether the cwd/root workspace is itself a target of this update.
-    cwd_in_target: bool,
-    /// Whether the monorepo root is a target (catalogs live there).
-    root_in_target: bool,
-    /// Whether the monorepo root is in `members` (running from a non-root cwd).
-    root_as_member: bool,
-}
-
-impl WorkspaceUpdatePlan {
-    fn cwd_only() -> Self {
-        Self {
-            members: Vec::new(),
-            cwd_in_target: true,
-            root_in_target: true,
-            root_as_member: false,
-        }
-    }
-}
-
-/// A member captured before install so its resolved versions can be written back.
-struct MemberUpdate {
-    package_json_path: Box<[u8]>,
-    /// Stable across `clean_with_logger`; selects the member post-install.
-    name_hash: Option<PackageNameHash>,
-    source_before_install: Vec<u8>,
-    /// As read from disk, so an unchanged member is not rewritten.
-    original_contents: Vec<u8>,
-    updating_packages: StringArrayHashMap<PackageUpdateInfo>,
-    indentation: Indentation,
-    preserve_trailing_newline: bool,
-}
-
-fn prepare_workspace_update_plan(
+fn write_resolved_versions_to_targets(
     manager: &mut PackageManager,
-    original_cwd: &[u8],
-) -> Result<WorkspaceUpdatePlan, Error> {
-    let recursive = manager.options.do_.recursive();
-    let has_filter = !manager.options.filter_patterns.is_empty();
-    if !recursive && !has_filter {
-        return Ok(WorkspaceUpdatePlan::cwd_only());
-    }
-
-    // Probe without migration; `install_with_manager` owns the real load/error policy.
-    if !manager.options.do_.load_lockfile()
-        || !matches!(
-            manager.load_lockfile_from_cwd::<false>(),
-            lockfile::LoadResult::Ok(_)
-        )
-    {
-        return Ok(WorkspaceUpdatePlan::cwd_only());
-    }
-
-    let selected: Vec<PackageID> = WorkspaceFilter::select_workspaces(
-        &manager.lockfile,
-        manager.options.filter_patterns,
-        original_cwd,
-    );
-
-    let cwd_pkg_id = manager
-        .lockfile
-        .get_workspace_package_id(manager.workspace_name_hash);
-
-    // Install-time update gate keyed on name hashes (stable across `clean_with_logger`).
-    {
-        let col = manager.lockfile.packages.items_name_hash();
-        let name_hashes: Box<[PackageNameHash]> =
-            selected.iter().map(|&id| col[id as usize]).collect();
-        manager.update_workspace_name_hashes = Some(name_hashes);
-    }
-
-    let top_level_dir: Box<[u8]> = Box::from(strings::without_trailing_slash(
-        FileSystem::instance().top_level_dir(),
-    ));
-
-    let mut cwd_in_target = false;
-    let mut root_in_target = false;
-    let mut root_as_member = false;
-    let mut members: Vec<MemberUpdate> = Vec::new();
-    for &pkg_id in &selected {
-        let res_tag = manager.lockfile.packages.items_resolution()[pkg_id as usize].tag;
-        if res_tag == resolution::Tag::Root {
-            root_in_target = true;
-        }
-        if pkg_id == cwd_pkg_id {
-            // The cwd/root package.json is edited by the main flow.
-            cwd_in_target = true;
-            continue;
-        }
-
-        // `None` = root workspace (per `get_workspace_package_id`); only members carry a hash.
-        let name_hash: Option<PackageNameHash> = if res_tag == resolution::Tag::Workspace {
-            Some(manager.lockfile.packages.items_name_hash()[pkg_id as usize])
-        } else {
-            root_as_member = true;
-            None
-        };
-        let rel: Box<[u8]> = if res_tag == resolution::Tag::Workspace {
-            let res = manager.lockfile.packages.items_resolution()[pkg_id as usize];
-            Box::from(
-                res.workspace()
-                    .slice(manager.lockfile.buffers.string_bytes.as_slice()),
-            )
-        } else {
-            Box::default()
-        };
-
-        let mut path_buf = PathBuffer::uninit();
-        let abs_path: &[u8] =
-            if rel.is_empty() {
-                bun_paths::resolve_path::join_abs_string_buf::<
-                    bun_paths::resolve_path::platform::Auto,
-                >(&top_level_dir, &mut path_buf.0, &[b"package.json"])
-            } else {
-                bun_paths::resolve_path::join_abs_string_buf::<
-                    bun_paths::resolve_path::platform::Auto,
-                >(&top_level_dir, &mut path_buf.0, &[&rel, b"package.json"])
-            };
-
-        members.push(prepare_member_before_install(manager, abs_path, name_hash)?);
-    }
-
-    Ok(WorkspaceUpdatePlan {
-        members,
-        cwd_in_target,
-        root_in_target,
-        root_as_member,
-    })
-}
-
-fn prepare_member_before_install(
-    manager: &mut PackageManager,
-    abs_path: &[u8],
-    name_hash: Option<PackageNameHash>,
-) -> Result<MemberUpdate, Error> {
-    // Raw pointer so the edit pass can take `&mut manager`; read/parse errors crash like the cwd path.
-    let entry_ptr: *mut MapEntry = match manager.workspace_package_json_cache.get_with_path(
-        manager.log_mut(),
-        abs_path,
-        GetJSONOptions {
-            guess_indentation: true,
-            ..Default::default()
-        },
-    ) {
-        GetResult::Entry(entry) => core::ptr::from_mut(entry),
-        GetResult::ParseErr(err) => {
-            let _ = manager
-                .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()));
-            Output::err_generic(
-                "failed to parse package.json \"{s}\": {s}",
-                (BStr::new(abs_path), err.name()),
-            );
-            Global::crash();
-        }
-        GetResult::ReadErr(err) => {
-            Output::err_generic(
-                "failed to read package.json \"{s}\": {s}",
-                (BStr::new(abs_path), err.name()),
-            );
-            Global::crash();
-        }
-    };
-
-    let (mut member_root, indentation, preserve_trailing_newline, original_contents) = {
-        // SAFETY: valid until the next `get_with_path`; the edit pass touches disjoint manager fields.
-        let entry = unsafe { &*entry_ptr };
-        (
-            entry.root,
-            entry.indentation,
-            entry.source.contents.last() == Some(&b'\n'),
-            entry.source.contents.to_vec(),
-        )
-    };
-
-    let mut updating_packages: StringArrayHashMap<PackageUpdateInfo> =
-        StringArrayHashMap::default();
-    PackageJSONEditor::edit_update_no_args(
-        manager,
-        &mut updating_packages,
-        name_hash,
-        &mut member_root,
-        EditOptions {
-            exact_versions: true,
-            before_install: true,
-            ..Default::default()
-        },
-    )?;
-
-    // SAFETY: see above.
-    let entry: &mut MapEntry = unsafe { &mut *entry_ptr };
-    let source_before_install = print_package_json(
-        &entry.source,
-        member_root,
-        indentation,
-        preserve_trailing_newline,
-    );
-    // Cache the pre-install edit so install resolves the updated versions for this member.
-    entry.source.contents = Cow::Owned(source_before_install.clone());
-    if let Err(err) = entry.reparse_root(manager.log_mut()) {
-        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
-        Global::crash();
-    }
-
-    Ok(MemberUpdate {
-        package_json_path: Box::from(abs_path),
-        name_hash,
-        source_before_install,
-        original_contents,
-        updating_packages,
-        indentation,
-        preserve_trailing_newline,
-    })
-}
-
-fn commit_workspace_member_update(
-    manager: &mut PackageManager,
-    member: &mut MemberUpdate,
+    targets: &[(crate::PackageNameHash, Box<[u8]>)],
 ) -> Result<(), Error> {
-    let source =
-        bun_ast::Source::init_path_string(&b"package.json"[..], &member.source_before_install[..]);
-    let json_arena = bun_alloc::Arena::new();
-    let mut ast: bun_ast::Expr =
-        match json::parse_package_json_utf8(&source, manager.log_mut(), &json_arena) {
-            Ok(v) => v,
-            Err(err) => {
-                bun_core::pretty_errorln!(
-                    "package.json failed to parse due to error {}",
-                    err.name()
+    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
+    let exact_versions = manager.options.enable.exact_versions();
+    let log = manager.log_mut();
+
+    for (hash, name) in targets {
+        let pkg_id = manager.lockfile.get_workspace_package_id(Some(*hash));
+        let res = manager.lockfile.packages.items_resolution()[pkg_id as usize];
+        let ws_name_hash = if res.tag == crate::resolution::Tag::Root { None } else { Some(*hash) };
+        let rel: &[u8] = if res.tag == crate::resolution::Tag::Workspace {
+            res.workspace()
+                .slice(manager.lockfile.buffers.string_bytes.as_slice())
+        } else {
+            b""
+        };
+        let mut path_buf = PathBuffer::uninit();
+        let path: &[u8] = bun_paths::resolve_path::join_abs_string_buf::<
+            bun_paths::resolve_path::platform::Auto,
+        >(top_level, &mut path_buf.0, &[rel, b"package.json"]);
+
+        let entry = match manager.workspace_package_json_cache.get_with_path(
+            log,
+            path,
+            GetJSONOptions {
+                guess_indentation: true,
+                ..Default::default()
+            },
+        ) {
+            GetResult::Entry(e) => e,
+            GetResult::ParseErr(err) | GetResult::ReadErr(err) => {
+                Output::err_generic(
+                    "failed to read/parse package.json for workspace '{s}': {s}",
+                    (bstr::BStr::new(name), err.name()),
                 );
                 Global::crash();
             }
         };
 
-    PackageJSONEditor::edit_update_no_args(
-        manager,
-        &mut member.updating_packages,
-        member.name_hash,
-        &mut ast,
-        EditOptions {
-            exact_versions: manager.options.enable.exact_versions(),
-            ..Default::default()
-        },
-    )?;
-
-    if member.name_hash.is_none() {
-        // Root as a fanned-out member: apply catalog resolutions here so the write carries them.
-        let _ = PackageJSONEditor::edit_catalogs_after_update(
-            manager,
-            &ast,
+        let mut ast = entry.root;
+        let mut updating = bun_collections::StringArrayHashMap::default();
+        PackageJSONEditor::edit_update_no_args_in(
+            &manager.lockfile,
+            &manager.ast_arena,
+            &mut updating,
+            ws_name_hash,
+            update_to_latest,
+            &mut ast,
             EditOptions {
-                exact_versions: manager.options.enable.exact_versions(),
+                exact_versions: true,
+                before_install: true,
                 ..Default::default()
             },
         )?;
+        PackageJSONEditor::edit_update_no_args_in(
+            &manager.lockfile,
+            &manager.ast_arena,
+            &mut updating,
+            ws_name_hash,
+            update_to_latest,
+            &mut ast,
+            EditOptions {
+                exact_versions,
+                ..Default::default()
+            },
+        )?;
+
+        print_package_json_into_cache_entry(entry, ast);
+        let mut path_zbuf = PathBuffer::uninit();
+        let path_z = bun_paths::resolve_path::z(path, &mut path_zbuf);
+        File::write_file(Fd::cwd(), path_z, &entry.source.contents).map_err(Error::from)?;
     }
-
-    let new_source = print_package_json(
-        &source,
-        ast,
-        member.indentation,
-        member.preserve_trailing_newline,
-    );
-
-    // Don't rewrite a member the update left unchanged.
-    if new_source == member.original_contents {
-        return Ok(());
-    }
-
-    let mut path_zbuf = PathBuffer::uninit();
-    let path_z = bun_paths::resolve_path::z(&member.package_json_path, &mut path_zbuf);
-    File::write_file(Fd::cwd(), path_z, &new_source).map_err(Error::from)?;
     Ok(())
-}
-
-fn print_package_json(
-    source: &bun_ast::Source,
-    root: bun_ast::Expr,
-    indent: Indentation,
-    preserve_newline: bool,
-) -> Vec<u8> {
-    let mut buffer_writer = js_printer::BufferWriter::init();
-    buffer_writer
-        .buffer
-        .list
-        .reserve((source.contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
-    buffer_writer.append_newline = preserve_newline;
-    let mut writer = js_printer::BufferPrinter::init(buffer_writer);
-    if let Err(e) = js_printer::print_json(
-        &mut writer,
-        root,
-        source,
-        js_printer::PrintJsonOptions {
-            indent,
-            mangled_props: None,
-            ..Default::default()
-        },
-    ) {
-        bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name());
-        Global::crash();
-    }
-    writer.ctx.written_without_trailing_zero().to_vec()
 }
 
 pub fn update_package_json_and_install_and_cli(

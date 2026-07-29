@@ -533,9 +533,12 @@ pub fn install_with_manager(
                         for dependency_i in 0..dependencies_len {
                             let dependency =
                                 manager.lockfile.buffers.dependencies[dependency_i].clone();
-                            if UpdateRequest::contains_name_hash(
+                            if UpdateRequest::contains_name(
                                 &manager.update_requests,
                                 dependency.name_hash,
+                                dependency
+                                    .name
+                                    .slice(manager.lockfile.buffers.string_bytes.as_slice()),
                             ) {
                                 manager.lockfile.buffers.resolutions[dependency_i] =
                                     invalid_package_id;
