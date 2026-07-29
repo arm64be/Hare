@@ -585,7 +585,9 @@ impl WorkspaceFilter {
 
         let mut ids: Vec<PackageID> = Vec::new();
         for (pkg_id, res) in pkg_resolutions.iter().enumerate() {
-            if res.tag == crate::resolution::Tag::Workspace || res.tag == crate::resolution::Tag::Root {
+            if res.tag == crate::resolution::Tag::Workspace
+                || res.tag == crate::resolution::Tag::Root
+            {
                 ids.push(pkg_id as PackageID);
             }
         }
@@ -616,7 +618,9 @@ impl WorkspaceFilter {
                             }
                             let res = &pkg_resolutions[pkg_id as usize];
                             let res_path: &[u8] = match res.tag {
-                                crate::resolution::Tag::Workspace => res.workspace().slice(string_buf),
+                                crate::resolution::Tag::Workspace => {
+                                    res.workspace().slice(string_buf)
+                                }
                                 crate::resolution::Tag::Root => top_level_dir,
                                 _ => unreachable!(),
                             };

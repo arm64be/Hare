@@ -543,23 +543,22 @@ impl UpdateInteractiveCommand {
             }
         }
 
-        let workspace_pkg_ids: Vec<PackageID> = if !manager.options.filter_patterns.is_empty()
-            || manager.options.do_.recursive()
-        {
-            WorkspaceFilter::select_workspaces(
-                &manager.lockfile,
-                manager.options.filter_patterns,
-                original_cwd,
-            )
-        } else {
-            let root_pkg_id = manager
-                .root_package_id
-                .get(&manager.lockfile, manager.workspace_name_hash);
-            if root_pkg_id == INVALID_PACKAGE_ID {
-                return Ok(());
-            }
-            vec![root_pkg_id]
-        };
+        let workspace_pkg_ids: Vec<PackageID> =
+            if !manager.options.filter_patterns.is_empty() || manager.options.do_.recursive() {
+                WorkspaceFilter::select_workspaces(
+                    &manager.lockfile,
+                    manager.options.filter_patterns,
+                    original_cwd,
+                )
+            } else {
+                let root_pkg_id = manager
+                    .root_package_id
+                    .get(&manager.lockfile, manager.workspace_name_hash);
+                if root_pkg_id == INVALID_PACKAGE_ID {
+                    return Ok(());
+                }
+                vec![root_pkg_id]
+            };
 
         populate_manifest_cache::populate_manifest_cache(
             manager,
