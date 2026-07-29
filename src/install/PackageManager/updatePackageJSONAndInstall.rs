@@ -938,6 +938,7 @@ fn write_resolved_versions_to_targets(
     let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
     let exact_versions = manager.options.enable.exact_versions();
     let log = manager.log_mut();
+    let mut any_failed = false;
 
     for (hash, name) in targets {
         let pkg_id = manager.lockfile.get_workspace_package_id(Some(*hash));
@@ -975,6 +976,7 @@ fn write_resolved_versions_to_targets(
                     "failed to read/parse package.json for workspace '{s}': {s}",
                     (bstr::BStr::new(name), err.name()),
                 );
+                any_failed = true;
                 continue;
             }
         };
@@ -1011,6 +1013,9 @@ fn write_resolved_versions_to_targets(
         let mut path_zbuf = PathBuffer::uninit();
         let path_z = bun_paths::resolve_path::z(path, &mut path_zbuf);
         File::write_file(Fd::cwd(), path_z, &entry.source.contents).map_err(Error::from)?;
+    }
+    if any_failed {
+        Global::exit(1);
     }
     Ok(())
 }
