@@ -369,7 +369,6 @@ pub(crate) fn edit_update_no_args_in(
                         }
                     }
                 } else {
-                    let lockfile = lockfile;
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
                     let workspace_package_id =
                         lockfile.get_workspace_package_id(workspace_name_hash);

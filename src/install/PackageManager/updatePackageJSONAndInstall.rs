@@ -941,6 +941,9 @@ fn write_resolved_versions_to_targets(
 
     for (hash, name) in targets {
         let pkg_id = manager.lockfile.get_workspace_package_id(Some(*hash));
+        if manager.lockfile.packages.items_name_hash()[pkg_id as usize] != *hash {
+            continue;
+        }
         let res = manager.lockfile.packages.items_resolution()[pkg_id as usize];
         let ws_name_hash = if res.tag == crate::resolution::Tag::Root {
             None

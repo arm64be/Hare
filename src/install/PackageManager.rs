@@ -606,46 +606,51 @@ impl WorkspaceFilter {
 
         let top_level_dir = FileSystem::instance().top_level_dir();
 
+        let has_positive = converted_filters.iter().any(|f| match f {
+            WorkspaceFilter::All => true,
+            WorkspaceFilter::Path(p) | WorkspaceFilter::Name(p) => p.first() != Some(&b'!'),
+        });
+
         let mut i = 0;
         while i < ids.len() {
             let pkg_id = ids[i];
-            let matched = 'matched: {
-                for filter in &converted_filters {
-                    match filter {
-                        WorkspaceFilter::Path(pattern) => {
-                            if pattern.is_empty() {
-                                continue;
-                            }
-                            let res = &pkg_resolutions[pkg_id as usize];
-                            let res_path: &[u8] = match res.tag {
-                                crate::resolution::Tag::Workspace => {
-                                    res.workspace().slice(string_buf)
-                                }
-                                crate::resolution::Tag::Root => top_level_dir,
-                                _ => unreachable!(),
-                            };
-                            let abs = resolve_path::join_abs_string_buf::<platform::Posix>(
-                                top_level_dir,
-                                &mut path_buf.0,
-                                &[res_path],
-                            );
-                            if !bun_glob::r#match(pattern, strings::without_trailing_slash(abs))
-                                .matches()
-                            {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::Name(pattern) => {
-                            let name = pkg_names[pkg_id as usize].slice(string_buf);
-                            if !bun_glob::r#match(pattern, name).matches() {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::All => {}
+            let mut matched = !has_positive;
+            for filter in &converted_filters {
+                let (pattern, subject): (&[u8], &[u8]) = match filter {
+                    WorkspaceFilter::All => {
+                        matched = true;
+                        continue;
                     }
+                    WorkspaceFilter::Path(pattern) => {
+                        if pattern.is_empty() {
+                            continue;
+                        }
+                        let res = &pkg_resolutions[pkg_id as usize];
+                        let res_path: &[u8] = match res.tag {
+                            crate::resolution::Tag::Workspace => res.workspace().slice(string_buf),
+                            crate::resolution::Tag::Root => top_level_dir,
+                            _ => unreachable!(),
+                        };
+                        let abs = resolve_path::join_abs_string_buf::<platform::Posix>(
+                            top_level_dir,
+                            &mut path_buf.0,
+                            &[res_path],
+                        );
+                        (pattern, strings::without_trailing_slash(abs))
+                    }
+                    WorkspaceFilter::Name(pattern) => {
+                        (pattern, pkg_names[pkg_id as usize].slice(string_buf))
+                    }
+                };
+                if pattern.first() == Some(&b'!') {
+                    if bun_glob::r#match(&pattern[1..], subject).matches() {
+                        matched = false;
+                        break;
+                    }
+                } else if bun_glob::r#match(pattern, subject).matches() {
+                    matched = true;
                 }
-                true
-            };
+            }
             if matched {
                 i += 1;
             } else {

@@ -79,7 +79,7 @@ impl UpdateRequest {
     ) -> bool {
         requests
             .iter()
-            .any(|r| r.name_hash == name_hash && r.name == name)
+            .any(|r| r.name_hash == name_hash && (r.name.is_empty() || r.name == name))
     }
 
     /// Borrow the backing string buffer.

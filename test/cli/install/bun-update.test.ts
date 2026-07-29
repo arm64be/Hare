@@ -633,6 +633,58 @@ it("--filter updates only matching workspaces, leaving siblings and root untouch
   expect(root.dependencies.baz).toBe("~0.0.3");
 });
 
+// Multiple `--filter` patterns select the union of matches (any positive), minus negations.
+it("--filter with multiple patterns selects the union of matching workspaces", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      dependencies: { baz: "~0.0.3" },
+    }),
+  );
+  for (const n of ["pkg-a", "pkg-b", "pkg-c"]) {
+    await mkdir(join(package_dir, "packages", n), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", n, "package.json"),
+      JSON.stringify({ name: n, dependencies: { baz: "~0.0.3" } }),
+    );
+  }
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stderr).text()).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--filter", "pkg-a", "--filter", "pkg-b", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await new Response(stderr).text()).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  expect({
+    root: (await file(join(package_dir, "package.json")).json()).dependencies.baz,
+    a: (await file(join(package_dir, "packages", "pkg-a", "package.json")).json()).dependencies.baz,
+    b: (await file(join(package_dir, "packages", "pkg-b", "package.json")).json()).dependencies.baz,
+    c: (await file(join(package_dir, "packages", "pkg-c", "package.json")).json()).dependencies.baz,
+  }).toEqual({ root: "~0.0.3", a: "~0.0.5", b: "~0.0.5", c: "~0.0.3" });
+});
+
 // https://github.com/oven-sh/bun/issues/33176
 // `bun update <name>` re-resolves every `<name>` entry in the lockfile, but
 // only the cwd package.json is rewritten. Named updates don't fan the
