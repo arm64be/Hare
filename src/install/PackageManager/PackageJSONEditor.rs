@@ -302,8 +302,7 @@ pub(crate) fn edit_update_no_args_in(
 
                         // npm versions only (and dist-tags with --latest); `catalog:` is handled by edit_catalogs_*.
                         if tag != dependency::Tag::Npm
-                            && (tag != dependency::Tag::DistTag
-                                || !update_to_latest)
+                            && (tag != dependency::Tag::DistTag || !update_to_latest)
                         {
                             continue;
                         }
@@ -319,8 +318,7 @@ pub(crate) fn edit_update_no_args_in(
                             {
                                 tag = dependency::Tag::infer(&version_literal[at_index + 1..]);
                                 if tag != dependency::Tag::Npm
-                                    && (tag != dependency::Tag::DistTag
-                                        || !update_to_latest)
+                                    && (tag != dependency::Tag::DistTag || !update_to_latest)
                                 {
                                     continue;
                                 }
@@ -417,9 +415,7 @@ pub(crate) fn edit_update_no_args_in(
                         'updated: {
                             // fetchSwapRemove because we want to update the first dependency with a matching
                             // name, or none at all
-                            if let Some(entry) =
-                                updating_packages.fetch_swap_remove(key_str)
-                            {
+                            if let Some(entry) = updating_packages.fetch_swap_remove(key_str) {
                                 let is_alias = entry.value.is_alias;
                                 let dep_name = &*entry.key;
                                 debug_assert_eq!(
@@ -449,9 +445,7 @@ pub(crate) fn edit_update_no_args_in(
                                     if let Some(npm_version) = resolved_version.try_npm() {
                                         // It's possible we inserted a dependency that won't update (version is an exact version).
                                         // If we find one, skip to keep the original version literal.
-                                        if !update_to_latest
-                                            && npm_version.version.is_exact()
-                                        {
+                                        if !update_to_latest && npm_version.version.is_exact() {
                                             break 'updated;
                                         }
                                     }

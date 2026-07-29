@@ -172,7 +172,12 @@ fn update_package_json_and_install_with_manager_with_updates(
         manager.update_target_workspaces = Some(
             selected
                 .iter()
-                .map(|&id| (name_hashes[id as usize], Box::from(names[id as usize].slice(sbuf))))
+                .map(|&id| {
+                    (
+                        name_hashes[id as usize],
+                        Box::from(names[id as usize].slice(sbuf)),
+                    )
+                })
                 .collect(),
         );
     }
@@ -377,7 +382,8 @@ fn update_package_json_and_install_with_manager_with_updates(
                 // `edit` may shrink the slice.
                 let new_len = updates_slice.len();
                 updates.truncate(new_len);
-            } else if subcommand == Subcommand::Update && manager.update_target_workspaces.is_none() {
+            } else if subcommand == Subcommand::Update && manager.update_target_workspaces.is_none()
+            {
                 PackageJSONEditor::edit_update_no_args(
                     manager,
                     &mut current_package_json_root,
@@ -578,7 +584,10 @@ fn update_package_json_and_install_with_manager_with_updates(
             t.iter().any(|(th, tn)| *th == h && &**tn == n)
         });
 
-        if subcommand == Subcommand::Update && manager.update_requests.is_empty() && root_is_targeted {
+        if subcommand == Subcommand::Update
+            && manager.update_requests.is_empty()
+            && root_is_targeted
+        {
             let root_package_json_root: bun_ast::Expr = root_package_json.root;
             if PackageJSONEditor::edit_catalogs_before_update(manager, &root_package_json_root)? {
                 editing_catalogs = true;
@@ -930,7 +939,11 @@ fn write_resolved_versions_to_targets(
     for (hash, name) in targets {
         let pkg_id = manager.lockfile.get_workspace_package_id(Some(*hash));
         let res = manager.lockfile.packages.items_resolution()[pkg_id as usize];
-        let ws_name_hash = if res.tag == crate::resolution::Tag::Root { None } else { Some(*hash) };
+        let ws_name_hash = if res.tag == crate::resolution::Tag::Root {
+            None
+        } else {
+            Some(*hash)
+        };
         let rel: &[u8] = if res.tag == crate::resolution::Tag::Workspace {
             res.workspace()
                 .slice(manager.lockfile.buffers.string_bytes.as_slice())

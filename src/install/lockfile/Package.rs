@@ -1484,12 +1484,12 @@ impl Diff {
             // preserved. Same gate as the `Dependency::eql == true` branch
             // above.
             let is_explicit_update_target = matches!(update_requests, Some(updates)
-                if updates.is_empty()
-                    || UpdateRequest::contains_name(
-                        updates,
-                        from_dep.name_hash,
-                        from_dep.name.slice(from_lockfile.buffers.string_bytes.as_slice()),
-                    ));
+            if updates.is_empty()
+                || UpdateRequest::contains_name(
+                    updates,
+                    from_dep.name_hash,
+                    from_dep.name.slice(from_lockfile.buffers.string_bytes.as_slice()),
+                ));
             if !is_explicit_update_target {
                 if let Some(mapping) = id_mapping.as_deref_mut() {
                     let from_res_id = from_resolutions[i];

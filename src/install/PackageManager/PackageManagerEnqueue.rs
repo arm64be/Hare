@@ -1982,7 +1982,8 @@ fn get_or_put_resolved_package_with_find_result(
             )
         } else if let Some(targets) = this.update_target_workspaces.as_deref() {
             // `bun update -r`/`--filter`: direct deps of the selected workspaces.
-            this.lockfile.is_dependency_of_workspace_in(targets, dependency_id)
+            this.lockfile
+                .is_dependency_of_workspace_in(targets, dependency_id)
         } else {
             // Bare `bun update`: direct deps of the cwd workspace.
             let this_ptr: *mut PackageManager = this;
@@ -2382,11 +2383,14 @@ fn get_or_put_resolved_package(
             let latest_for_target = version.tag == dependency::version::Tag::Npm
                 && this.to_update
                 && this.update_requests.is_empty()
-                && this.options.do_.contains(crate::package_manager::options::Do::UPDATE_TO_LATEST)
                 && this
-                    .update_target_workspaces
-                    .as_deref()
-                    .is_some_and(|t| this.lockfile.is_dependency_of_workspace_in(t, dependency_id));
+                    .options
+                    .do_
+                    .contains(crate::package_manager::options::Do::UPDATE_TO_LATEST)
+                && this.update_target_workspaces.as_deref().is_some_and(|t| {
+                    this.lockfile
+                        .is_dependency_of_workspace_in(t, dependency_id)
+                });
 
             let version_result: Npm::FindVersionResult = match version.tag {
                 // SAFETY: `version.tag` discriminates the union arm.
