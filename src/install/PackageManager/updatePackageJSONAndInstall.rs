@@ -166,7 +166,20 @@ fn update_package_json_and_install_with_manager_with_updates(
                 Global::crash();
             }
             crate::lockfile::LoadResult::Err(cause) => {
-                install_with_manager::report_lockfile_load_error(manager, &cause, log_level)?;
+                if log_level != LogLevel::Silent {
+                    let what: &str = match cause.step {
+                        crate::lockfile::LoadStep::OpenFile => "open",
+                        crate::lockfile::LoadStep::ReadFile => "read",
+                        crate::lockfile::LoadStep::ParseFile => "parse",
+                        crate::lockfile::LoadStep::Migrating => "migrate",
+                    };
+                    Output::err_generic("failed to {s} lockfile: {s}", (what, cause.value.name()));
+                    if manager.log_mut().has_errors() {
+                        let _ = manager
+                            .log_mut()
+                            .print(std::ptr::from_mut(Output::error_writer()));
+                    }
+                }
                 Global::crash();
             }
         }
