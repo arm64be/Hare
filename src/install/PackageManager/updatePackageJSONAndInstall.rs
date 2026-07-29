@@ -156,11 +156,14 @@ fn update_package_json_and_install_with_manager_with_updates(
         && updates.is_empty()
         && (manager.options.do_.recursive() || !manager.options.filter_patterns.is_empty())
         && manager.options.do_.load_lockfile()
-        && matches!(
-            manager.load_lockfile_from_cwd::<false>(),
-            crate::lockfile::LoadResult::Ok(_)
-        )
     {
+        if !matches!(
+            manager.load_lockfile_from_cwd::<true>(),
+            crate::lockfile::LoadResult::Ok(_)
+        ) {
+            Output::err_generic("missing lockfile, nothing to update", ());
+            Global::crash();
+        }
         let selected = WorkspaceFilter::select_workspaces(
             &manager.lockfile,
             manager.options.filter_patterns,

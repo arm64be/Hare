@@ -2380,7 +2380,12 @@ fn get_or_put_resolved_package(
             let manifest: &Npm::PackageManifest = manifest;
 
             // `bun update -r/--filter --latest`: resolve targeted workspaces' npm deps by dist-tag `latest`.
-            let latest_for_target = version.tag == dependency::version::Tag::Npm
+            let latest_for_target = dependency.version.tag == dependency::version::Tag::Npm
+                && version.tag == dependency::version::Tag::Npm
+                && {
+                    let buf = this.lockfile.buffers.string_bytes.as_slice();
+                    version.literal.eql(dependency.version.literal, buf, buf)
+                }
                 && this.to_update
                 && this.update_requests.is_empty()
                 && this

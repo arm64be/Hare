@@ -781,6 +781,10 @@ it("--filter excluding root leaves root (and its catalog) untouched", async () =
   // Root is not a `--filter pkg-a` target; nothing in its package.json changes.
   expect(await file(join(package_dir, "package.json")).text()).toBe(rootJson);
   expect((await file(join(package_dir, "packages", "pkg-a", "package.json")).json()).dependencies.baz).toBe("catalog:");
+  // pkg-a's `catalog:` dep stays within the catalog range; `--latest` must not bypass it.
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+    version: "0.0.3",
+  });
 
   // A subsequent frozen-lockfile install must pass (no catalog drift vs. lockfile).
   const frozen = spawn({
