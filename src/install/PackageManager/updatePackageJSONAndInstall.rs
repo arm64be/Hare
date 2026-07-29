@@ -975,7 +975,7 @@ fn write_resolved_versions_to_targets(
                     "failed to read/parse package.json for workspace '{s}': {s}",
                     (bstr::BStr::new(name), err.name()),
                 );
-                Global::crash();
+                continue;
             }
         };
 
