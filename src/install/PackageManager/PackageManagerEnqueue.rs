@@ -2380,8 +2380,10 @@ fn get_or_put_resolved_package(
             let manifest: &Npm::PackageManifest = manifest;
 
             // `bun update -r/--filter --latest`: resolve targeted workspaces' npm deps by dist-tag `latest`.
-            let latest_for_target = dependency.version.tag == dependency::version::Tag::Npm
-                && version.tag == dependency::version::Tag::Npm
+            let latest_for_target = matches!(
+                dependency.version.tag,
+                dependency::version::Tag::Npm | dependency::version::Tag::DistTag
+            ) && version.tag == dependency.version.tag
                 && {
                     let buf = this.lockfile.buffers.string_bytes.as_slice();
                     version.literal.eql(dependency.version.literal, buf, buf)
@@ -2398,18 +2400,17 @@ fn get_or_put_resolved_package(
                 });
 
             let version_result: Npm::FindVersionResult = match version.tag {
+                _ if latest_for_target => manifest.find_by_dist_tag_with_filter(
+                    b"latest",
+                    this.options.minimum_release_age_ms,
+                    this.options.minimum_release_age_excludes,
+                ),
                 // SAFETY: `version.tag` discriminates the union arm.
                 dependency::version::Tag::DistTag => manifest.find_by_dist_tag_with_filter(
                     this.lockfile.str(&version.dist_tag().tag),
                     this.options.minimum_release_age_ms,
                     this.options.minimum_release_age_excludes,
                 ),
-                dependency::version::Tag::Npm if latest_for_target => manifest
-                    .find_by_dist_tag_with_filter(
-                        b"latest",
-                        this.options.minimum_release_age_ms,
-                        this.options.minimum_release_age_excludes,
-                    ),
                 dependency::version::Tag::Npm => manifest.find_best_version_with_filter(
                     &version.npm().version,
                     this.lockfile.buffers.string_bytes.as_slice(),

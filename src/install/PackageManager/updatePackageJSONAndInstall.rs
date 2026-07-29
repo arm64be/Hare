@@ -1018,7 +1018,13 @@ fn write_resolved_versions_to_targets(
         print_package_json_into_cache_entry(entry, ast);
         let mut path_zbuf = PathBuffer::uninit();
         let path_z = bun_paths::resolve_path::z(path, &mut path_zbuf);
-        File::write_file(Fd::cwd(), path_z, &entry.source.contents).map_err(Error::from)?;
+        if let Err(err) = File::write_file(Fd::cwd(), path_z, &entry.source.contents) {
+            Output::err_generic(
+                "failed to write package.json for workspace '{s}': {s}",
+                (bstr::BStr::new(name), bstr::BStr::new(err.name())),
+            );
+            any_failed = true;
+        }
     }
     if any_failed {
         Global::exit(1);
