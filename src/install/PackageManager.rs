@@ -569,6 +569,89 @@ impl WorkspaceFilter {
             WorkspaceFilter::Name(buf)
         })
     }
+
+    /// Every workspace (including root) in `lockfile`, optionally filtered by
+    /// `filter_patterns` (empty = all). Shared by `outdated`/`update -i`/`update -r`.
+    pub fn select_workspaces(
+        lockfile: &crate::Lockfile,
+        filter_patterns: &[&[u8]],
+        original_cwd: &[u8],
+    ) -> Vec<PackageID> {
+        use crate::lockfile::package::PackageColumns as _;
+
+        let packages = lockfile.packages.slice();
+        let pkg_names = packages.items_name();
+        let pkg_resolutions = packages.items_resolution();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+
+        let mut ids: Vec<PackageID> = Vec::new();
+        for (pkg_id, res) in pkg_resolutions.iter().enumerate() {
+            if res.tag == crate::resolution::Tag::Workspace || res.tag == crate::resolution::Tag::Root {
+                ids.push(pkg_id as PackageID);
+            }
+        }
+
+        if filter_patterns.is_empty() {
+            return ids;
+        }
+
+        let mut path_buf = PathBuffer::uninit();
+        let converted_filters: Vec<WorkspaceFilter> = filter_patterns
+            .iter()
+            .map(|filter| {
+                bun_core::handle_oom(WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0))
+            })
+            .collect();
+
+        let top_level_dir = FileSystem::instance().top_level_dir();
+
+        let mut i = 0;
+        while i < ids.len() {
+            let pkg_id = ids[i];
+            let matched = 'matched: {
+                for filter in &converted_filters {
+                    match filter {
+                        WorkspaceFilter::Path(pattern) => {
+                            if pattern.is_empty() {
+                                continue;
+                            }
+                            let res = &pkg_resolutions[pkg_id as usize];
+                            let res_path: &[u8] = match res.tag {
+                                crate::resolution::Tag::Workspace => res.workspace().slice(string_buf),
+                                crate::resolution::Tag::Root => top_level_dir,
+                                _ => unreachable!(),
+                            };
+                            let abs = resolve_path::join_abs_string_buf::<platform::Posix>(
+                                top_level_dir,
+                                &mut path_buf.0,
+                                &[res_path],
+                            );
+                            if !bun_glob::r#match(pattern, strings::without_trailing_slash(abs))
+                                .matches()
+                            {
+                                break 'matched false;
+                            }
+                        }
+                        WorkspaceFilter::Name(pattern) => {
+                            let name = pkg_names[pkg_id as usize].slice(string_buf);
+                            if !bun_glob::r#match(pattern, name).matches() {
+                                break 'matched false;
+                            }
+                        }
+                        WorkspaceFilter::All => {}
+                    }
+                }
+                true
+            };
+            if matched {
+                i += 1;
+            } else {
+                ids.swap_remove(i);
+            }
+        }
+
+        ids
+    }
 }
 
 // deinit → Drop is automatic for Box<[u8]> variants; no explicit impl needed.

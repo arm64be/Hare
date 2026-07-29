@@ -14,7 +14,6 @@ use crate::{PackageID, PackageNameHash, lockfile, resolution};
 use bun_ast::Indentation;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_glob as glob;
 use bun_js_printer as js_printer;
 use bun_paths::{self, PathBuffer};
 use bun_sys::{self, Fd, File};
@@ -965,11 +964,11 @@ fn prepare_workspace_update_plan(
         return Ok(WorkspaceUpdatePlan::cwd_only());
     }
 
-    let selected: Vec<PackageID> = if has_filter {
-        select_filtered_workspaces(manager, original_cwd)
-    } else {
-        select_all_workspaces(manager)
-    };
+    let selected: Vec<PackageID> = WorkspaceFilter::select_workspaces(
+        &manager.lockfile,
+        manager.options.filter_patterns,
+        original_cwd,
+    );
 
     let cwd_pkg_id = manager
         .lockfile
@@ -1040,90 +1039,6 @@ fn prepare_workspace_update_plan(
         root_in_target,
         root_as_member,
     })
-}
-
-fn select_all_workspaces(manager: &PackageManager) -> Vec<PackageID> {
-    let resolutions = manager.lockfile.packages.items_resolution();
-    let mut ids = Vec::new();
-    for (pkg_id, res) in resolutions.iter().enumerate() {
-        if res.tag == resolution::Tag::Workspace || res.tag == resolution::Tag::Root {
-            ids.push(pkg_id as PackageID);
-        }
-    }
-    ids
-}
-
-fn select_filtered_workspaces(manager: &PackageManager, original_cwd: &[u8]) -> Vec<PackageID> {
-    let lockfile = &manager.lockfile;
-    let packages = lockfile.packages.slice();
-    let pkg_names = packages.items_name();
-    let pkg_resolutions = packages.items_resolution();
-    let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-    let mut ids: Vec<PackageID> = Vec::new();
-    for (pkg_id, res) in pkg_resolutions.iter().enumerate() {
-        if res.tag == resolution::Tag::Workspace || res.tag == resolution::Tag::Root {
-            ids.push(pkg_id as PackageID);
-        }
-    }
-
-    let mut path_buf = PathBuffer::uninit();
-    let converted_filters: Vec<WorkspaceFilter> = manager
-        .options
-        .filter_patterns
-        .iter()
-        .map(|filter| {
-            bun_core::handle_oom(WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0))
-        })
-        .collect();
-
-    let top_level_dir = FileSystem::instance().top_level_dir();
-
-    // Keep workspaces matching every filter (mirrors `outdated`/`update -i`).
-    let mut i = 0;
-    while i < ids.len() {
-        let pkg_id = ids[i];
-        let matched = 'matched: {
-            for filter in &converted_filters {
-                match filter {
-                    WorkspaceFilter::Path(pattern) => {
-                        if pattern.is_empty() {
-                            continue;
-                        }
-                        let res = &pkg_resolutions[pkg_id as usize];
-                        let res_path: &[u8] = match res.tag {
-                            resolution::Tag::Workspace => res.workspace().slice(string_buf),
-                            resolution::Tag::Root => top_level_dir,
-                            _ => continue,
-                        };
-                        let abs = bun_paths::resolve_path::join_abs_string_buf::<
-                            bun_paths::resolve_path::platform::Posix,
-                        >(
-                            top_level_dir, &mut path_buf.0, &[res_path]
-                        );
-                        if !glob::r#match(pattern, strings::without_trailing_slash(abs)).matches() {
-                            break 'matched false;
-                        }
-                    }
-                    WorkspaceFilter::Name(pattern) => {
-                        let name = pkg_names[pkg_id as usize].slice(string_buf);
-                        if !glob::r#match(pattern, name).matches() {
-                            break 'matched false;
-                        }
-                    }
-                    WorkspaceFilter::All => {}
-                }
-            }
-            true
-        };
-        if matched {
-            i += 1;
-        } else {
-            ids.swap_remove(i);
-        }
-    }
-
-    ids
 }
 
 fn prepare_member_before_install(
