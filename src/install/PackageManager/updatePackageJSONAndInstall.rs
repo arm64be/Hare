@@ -1161,9 +1161,9 @@ fn prepare_member_before_install(
         }
     };
 
-    // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until the
-    // next `get_with_path`. The edit pass touches only disjoint manager fields.
     let (mut member_root, indentation, preserve_trailing_newline, original_contents) = {
+        // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until the
+        // next `get_with_path`. The edit pass touches only disjoint manager fields.
         let entry = unsafe { &*entry_ptr };
         (
             entry.root,
