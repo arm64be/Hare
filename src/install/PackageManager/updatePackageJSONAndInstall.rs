@@ -156,9 +156,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::crash();
     }
 
-    // For `bun update --recursive`/`--filter` with no named packages, fan the
-    // update out to workspace members: set the install-time gate and edit each
-    // member before install (the cwd is still handled below via `cwd_in_target`).
+    // `bun update -r`/`--filter` (no names): fan out to members; cwd handled via `cwd_in_target`.
     let mut plan = if subcommand == Subcommand::Update && updates.is_empty() {
         prepare_workspace_update_plan(manager, original_cwd)?
     } else {
@@ -769,9 +767,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     let _ = written;
 
-    // When `--filter` selects workspaces that don't include the cwd/root, the
-    // cwd package.json is not a target and must not be rewritten here. For the
-    // default and `--recursive` cases `cwd_in_target` is always true.
+    // Skip cwd write when `--filter` didn't select it; always true for default/`-r`.
     if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
         && (plan.cwd_in_target || subcommand != Subcommand::Update)
     {
@@ -900,8 +896,6 @@ fn update_package_json_and_install_with_manager_with_updates(
         }
     }
 
-    // Commit the fanned-out workspace members: read back the versions the
-    // install step resolved and write each member's package.json to disk.
     if subcommand == Subcommand::Update && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
         for member in plan.members.iter_mut() {
             commit_workspace_member_update(manager, member)?;
@@ -911,8 +905,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     Ok(())
 }
 
-/// Plan for fanning `bun update` out to workspace members under
-/// `--recursive`/`--filter`.
+/// Fan-out plan for `bun update -r`/`--filter`.
 struct WorkspaceUpdatePlan {
     /// Members other than the cwd/root workspace (which the main flow edits).
     members: Vec<MemberUpdate>,
@@ -929,19 +922,14 @@ impl WorkspaceUpdatePlan {
     }
 }
 
-/// A workspace member to update, captured before install so its resolved
-/// versions can be written back afterwards.
+/// A member captured before install so its resolved versions can be written back.
 struct MemberUpdate {
-    /// Absolute path to the member's package.json.
     package_json_path: Box<[u8]>,
     /// Stable across `clean_with_logger`; selects the member post-install.
     name_hash: Option<PackageNameHash>,
-    /// The member package.json printed after the pre-install pass.
     source_before_install: Vec<u8>,
-    /// The member package.json exactly as it was on disk, so an unchanged
-    /// member is not rewritten.
+    /// As read from disk, so an unchanged member is not rewritten.
     original_contents: Vec<u8>,
-    /// Per-member original version literals captured in the pre-install pass.
     updating_packages: StringArrayHashMap<PackageUpdateInfo>,
     indentation: Indentation,
     preserve_trailing_newline: bool,
@@ -957,9 +945,7 @@ fn prepare_workspace_update_plan(
         return Ok(WorkspaceUpdatePlan::cwd_only());
     }
 
-    // Probe the lockfile without migration (planning only needs the workspace
-    // list). `install_with_manager` does the real migrating load and owns the
-    // error policy, so a missing/foreign/corrupt lockfile just falls back here.
+    // Probe without migration; `install_with_manager` owns the real load/error policy.
     if !manager.options.do_.load_lockfile()
         || !matches!(
             manager.load_lockfile_from_cwd::<false>(),
@@ -979,8 +965,7 @@ fn prepare_workspace_update_plan(
         .lockfile
         .get_workspace_package_id(manager.workspace_name_hash);
 
-    // The install-time update gate: a dependency updates iff it belongs to one
-    // of these workspaces. Name hashes are stable across `clean_with_logger`.
+    // Install-time update gate keyed on name hashes (stable across `clean_with_logger`).
     {
         let col = manager.lockfile.packages.items_name_hash();
         let name_hashes: Box<[PackageNameHash]> =
@@ -1002,8 +987,7 @@ fn prepare_workspace_update_plan(
         }
 
         let res_tag = manager.lockfile.packages.items_resolution()[pkg_id as usize].tag;
-        // `None` means the root workspace (the codebase convention
-        // `get_workspace_package_id` honors); only real workspaces carry a hash.
+        // `None` = root workspace (per `get_workspace_package_id`); only members carry a hash.
         let name_hash: Option<PackageNameHash> = if res_tag == resolution::Tag::Workspace {
             Some(manager.lockfile.packages.items_name_hash()[pkg_id as usize])
         } else {
@@ -1077,8 +1061,7 @@ fn select_filtered_workspaces(manager: &PackageManager, original_cwd: &[u8]) -> 
 
     let top_level_dir = FileSystem::instance().top_level_dir();
 
-    // Keep only workspaces matching every filter (mirrors `outdated`/`update
-    // --interactive`).
+    // Keep workspaces matching every filter (mirrors `outdated`/`update -i`).
     let mut i = 0;
     while i < ids.len() {
         let pkg_id = ids[i];
@@ -1130,9 +1113,7 @@ fn prepare_member_before_install(
     abs_path: &[u8],
     name_hash: Option<PackageNameHash>,
 ) -> Result<MemberUpdate, Error> {
-    // Demote to a raw pointer so the edit pass can take `&mut manager`. A
-    // selected workspace that can't be read/parsed is a hard failure (its
-    // dependencies are already in the update gate), matching the cwd path above.
+    // Raw pointer so the edit pass can take `&mut manager`; read/parse errors crash like the cwd path.
     let entry_ptr: *mut MapEntry = match manager.workspace_package_json_cache.get_with_path(
         manager.log_mut(),
         abs_path,
@@ -1162,8 +1143,7 @@ fn prepare_member_before_install(
     };
 
     let (mut member_root, indentation, preserve_trailing_newline, original_contents) = {
-        // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until the
-        // next `get_with_path`. The edit pass touches only disjoint manager fields.
+        // SAFETY: valid until the next `get_with_path`; the edit pass touches disjoint manager fields.
         let entry = unsafe { &*entry_ptr };
         (
             entry.root,
@@ -1195,8 +1175,7 @@ fn prepare_member_before_install(
         indentation,
         preserve_trailing_newline,
     );
-    // Push the pre-install edit into the cache so install resolves the updated
-    // (possibly `latest`) versions for this member.
+    // Cache the pre-install edit so install resolves the updated versions for this member.
     entry.source.contents = Cow::Owned(source_before_install.clone());
     if let Err(err) = entry.reparse_root(manager.log_mut()) {
         bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());

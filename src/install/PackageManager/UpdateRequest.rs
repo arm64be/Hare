@@ -70,8 +70,7 @@ fn anchor_cli_bytes(b: Box<[u8]>) -> &'static [u8] {
 }
 
 impl UpdateRequest {
-    /// `bun update <name>`: is `name_hash` one of the packages named on the
-    /// command line? `false` for a bare `bun update` (empty `requests`).
+    /// Is `name_hash` one of the `bun update <name>` targets? `false` for a bare `bun update`.
     #[inline]
     pub fn contains_name_hash(requests: &[UpdateRequest], name_hash: PackageNameHash) -> bool {
         requests.iter().any(|r| r.name_hash == name_hash)

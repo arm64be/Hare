@@ -427,9 +427,7 @@ pub struct PackageManager {
     // (catalog name, dependency name) -> original version literal
     pub updating_catalogs: Vec<CatalogUpdateInfo>,
 
-    // When `bun update` is run with `--recursive` or `--filter`, this holds the
-    // name hashes of the workspaces whose dependencies should be updated. `None`
-    // means the default behavior: only the current (root/cwd) workspace updates.
+    // `bun update -r`/`--filter`: workspaces whose deps update. None = cwd only.
     pub update_workspace_name_hashes: Option<Box<[PackageNameHash]>>,
 
     pub patched_dependencies_to_remove:

@@ -1972,18 +1972,14 @@ fn get_or_put_resolved_package_with_find_result(
     // borrows `this.lockfile` and `this` at once. Split via raw root.
     let should_update = this.to_update
         && if this.update_requests.is_empty() {
-            // Bare `bun update`: refresh the targeted workspace(s)' direct
-            // dependencies (cwd by default, or the `--recursive`/`--filter` set).
+            // Bare `bun update`: targeted workspace(s)' direct deps (cwd, or the `-r`/`--filter` set).
             let this_ptr: *mut PackageManager = this;
             // SAFETY: `is_update_target_dependency` reads `manager.root_package_id` /
-            // `manager.update_workspace_name_hashes` only — disjoint from
-            // `manager.lockfile`.
+            // `manager.update_workspace_name_hashes` only — disjoint from `manager.lockfile`.
             unsafe { &*(*this_ptr).lockfile }
                 .is_update_target_dependency(unsafe { &mut *this_ptr }, dependency_id)
         } else {
-            // `bun update <name>`: every dependency on `<name>` is an update target,
-            // whichever workspace or parent package it belongs to. Otherwise other
-            // resolutions stay pinned via `get_package_id`'s satisfies fallback.
+            // `bun update <name>`: every `<name>` slot, else other resolutions stay pinned.
             UpdateRequest::contains_name_hash(&this.update_requests, dependency.name_hash)
         };
 

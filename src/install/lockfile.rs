@@ -879,9 +879,7 @@ impl Lockfile {
         self.packages.items_dependencies()[root_id as usize].contains(id)
     }
 
-    /// Whether `id` is a dependency of a workspace targeted by the current
-    /// `bun update` (cwd by default; the `--recursive`/`--filter` set via
-    /// `update_workspace_name_hashes`). Keyed on name hashes (stable across clean).
+    /// Is `id` a dependency of a `bun update`-targeted workspace (cwd, or the `-r`/`--filter` set)?
     pub fn is_update_target_dependency(
         &self,
         manager: &mut PackageManager,

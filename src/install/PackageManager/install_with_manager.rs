@@ -527,9 +527,7 @@ pub fn install_with_manager(
                         }
                     }
 
-                    // `bun update <name>` must re-resolve every dependency on `<name>`,
-                    // not only the root-level slots `Diff::generate` invalidates. Drop and
-                    // re-enqueue every matching slot, like the `overrides_changed` pass above.
+                    // `bun update <name>`: drop and re-enqueue every `<name>` slot, not just root-level.
                     if manager.to_update && !manager.update_requests.is_empty() {
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for dependency_i in 0..dependencies_len {

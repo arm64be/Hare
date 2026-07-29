@@ -242,12 +242,9 @@ pub fn edit_trusted_dependencies(
 /// versions.
 pub(crate) fn edit_update_no_args(
     manager: &mut PackageManager,
-    // Per-workspace scratch so two workspaces can pin the same dep differently.
-    // The root/cwd passes `manager.updating_packages`; fanned-out members each
-    // pass a fresh map.
+    // Per-workspace scratch: cwd passes `manager.updating_packages`, each member a fresh map.
     updating_packages: &mut StringArrayHashMap<PackageUpdateInfo>,
-    // Which workspace's resolved versions to read back in the post-install pass.
-    // `None` means the root workspace.
+    // Which workspace's resolutions to read back post-install. `None` = root.
     workspace_name_hash: Option<PackageNameHash>,
     current_package_json: &mut Expr,
     options: EditOptions,
