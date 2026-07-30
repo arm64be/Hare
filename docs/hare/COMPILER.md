@@ -263,10 +263,17 @@ The H008 hook must establish this scope, in this order:
    scope, lock, and function.
 
 Both the `Strong` and deferred-GC scope are required. The root states the
-ownership intent and remains correct if traversal later admits a collection;
-the deferred-GC scope protects raw interior and child pointers used by the
-adapter today. Removing either protection is a shared contract change that
-requires a pinned-JSC lifetime audit.
+ownership intent and keeps the rooted cells reachable; it does not give them a
+stable address. The deferred-GC scope establishes only a bounded
+non-collection interval under the owning thread's pinned VM lock; it is not a
+pin. Raw and interior pointers are usable only synchronously while this
+verified non-collecting, non-reentrant adapter scope remains active. They must
+not cross a collection or safepoint, callback or re-entry, suspension, or the
+end of the scope. Address-sensitive use across such a boundary must reload the
+pointer from the rooted owner after the boundary or use a separately verified
+stable-address carrier whose lifetime covers the use. Removing either
+protection is a shared contract change that requires a pinned-JSC lifetime
+audit.
 
 The hook and visitor obey these invariants:
 
