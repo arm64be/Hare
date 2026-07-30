@@ -93,7 +93,18 @@ dependency and record all of the following as one auditable provenance record:
    for the inventory. The provenance entry must say whether the snapshot is
    the registry package or an upstream repository checkout and include the
    package commit/archive identifier when one exists.
-4. A verification note: package metadata version equals the lock tuple,
+4. A machine-readable selected-pin module/export/artifact manifest. It must
+   record the resolved package export-condition map and the exact files selected
+   by each relevant module/export, with separate complete arrays for ESM, CJS,
+   declarations, source, and generated artifacts. Every entry is a path plus a
+   SHA-256; a prose list or one package/tarball hash is insufficient. The
+   manifest must also identify the selected package version, lock integrity,
+   source-tree hash, and artifact hash, and must distinguish the complete
+   published artifact set from the compiler's reachable subset. The record
+   must be consumable as data (for example, an object with `exports`,
+   `esmFiles`, `cjsFiles`, `dtsFiles`, `sourceFiles`, `generatedFiles`, and
+   `reachableModules` arrays), not inferred from a later build.
+5. A verification note: package metadata version equals the lock tuple,
    lock integrity matches the fetched artifact, the source manifest matches
    that artifact, and the source diff against the other candidate was reviewed
    for runtime-domain changes.
@@ -129,16 +140,134 @@ committers, and arbitrary data carried in instruction fields. A pass may
 recognize the known primitive shapes, but recognition is not the definition of
 support.
 
+### 3.1 Custom Effectable/Commit is user-code re-entry
+
+`Effectable.Class` and `StructuralClass` are user-extensible instruction
+boundaries, not data-only records. In the inspected 3.22.0 source,
+`fiberRuntime.ts:1352-1353` dispatches `OP_COMMIT` as
+`internalCall(() => op.commit())`, and `Effectable.ts:95-106` defines the
+custom `commit(): Effect` contract. This is **3.22.0 evidence**, not a promise
+about the unresolved pin.
+
+The lowering of this boundary must:
+
+- retain the actual receiver, its prototype/brand state, and every captured
+  value through the call, any allocation or safepoint, and the returned Effect;
+- use the explicit H003 runtime-context and call/re-entry protocol for the
+  realm/worker, current fiber, current Context, caller continuation, exception
+  transfer, and root descriptor. H005 adds no ABI or hidden ambient slot: these
+  are operands/obligations of the H003 operation that enters user code;
+- revalidate the returned value generically. A non-Effect or invalid operation
+  must follow the selected source's invalid-effect defect behavior, not become
+  an unchecked native call;
+- preserve the selected source's exception boundary. In the inspected source,
+  `commit()` is invoked inside the `runLoop` `try`, so an ordinary throw is
+  caught by the run-loop conversion to a `Die`; the special
+  `InterruptedException` path retains its sequential defect/interruption
+  topology. This is source evidence to be rechecked after pin selection, not a
+  blanket rule for every callback;
+- allow the returned Effect to be any reachable instruction, including a
+  synchronous result, nested user re-entry, async registration, yield,
+  interruption, or cancellation. The `commit()` call itself is not assumed to
+  cancel merely because its returned Effect can be cancelled; and
+- keep receiver/capture roots, the returned Effect, continuation, cancellation
+  token, and late-callback state alive until the selected source's completion,
+  interruption, finalizer, or termination path releases them. Apply the
+  H004-C01/C04/C05 and H004-F02/F03/F04 carriers, with H019 owning the ledger
+  and H015/H016 owning callback and exception edges.
+
 The run loop is an explicit machine, not recursive host-language evaluation.
 `FiberRuntime` stores a continuation stack, fiber refs, child set, inbox,
 observers, async interrupt state, exit, scheduler, tracer, context, and
 supervisor (`internal/fiberRuntime.ts:293-339`). `runLoop` dispatches the
-operation tag, checks scheduler yield points, invokes tracer/supervisor hooks,
-and converts invalid operations or thrown host exceptions to defects
-(`internal/fiberRuntime.ts:1361-1430`). The continuation stack and all values
-live across a yield or async boundary require the H019/H015 lifetime and pin
-rules; no native lowering may rely on the JavaScript call stack surviving a
+operation tag and checks scheduler yield points, but its callback containment is
+deliberately asymmetric: the supervisor `onEffect` hook, running-inbox drain,
+and scheduler `shouldYield` call occur before the main `try`; tracer dispatch,
+custom `Commit`, and primitive handlers occur inside it
+(`internal/fiberRuntime.ts:1361-1430`). Only the latter group receives the
+selected source's run-loop catch conversion. The continuation stack and all
+values live across a yield or async boundary require the H019/H015 lifetime and
+pin rules; no native lowering may rely on the JavaScript call stack surviving a
 suspension.
+
+### 3.2 Observable current-fiber state and the H003 re-entry protocol
+
+The 3.22.0 source exposes an observable ambient current-fiber property:
+`internal/fiber.ts:384-388` reads `globalThis['effect/FiberCurrent']` through
+`currentFiberURI`. `internal/fiberRuntime.ts:666-680` saves the previous value,
+publishes the running fiber while draining its queue, and restores it in a
+`finally`; `:998-1007` does the same for `start`; and `:1040-1042` republishes
+the fiber from `patchRuntimeFlags`. These locations are **3.22.0 evidence** and
+must be source-audited against the eventual pin.
+
+H005 consumes H003's explicit ambient-state and call/re-entry protocol. It does
+not authorize a hidden native TLS/global current-fiber cell and does not define
+a new shared ABI. An H003-declared operation that enters Effect or user code
+must make the realm/worker owner, current fiber, current Context, continuation
+or caller frame, live-root descriptor, exception/result transfer, and
+suspend/resume edge explicit. An implementation may use a controlled
+realm-scoped carrier to preserve the package's observable property, but the
+carrier cannot hide the frame, continuation, exception, completion kind, or
+root set prohibited by H003's runtime ABI contract (`docs/hare/COMPILER.md`,
+Runtime ABI section).
+
+The required observable behavior is:
+
+- **Realm and worker ownership:** the property belongs to the executing
+  JavaScript realm's `globalThis`. Each VM/realm/worker has its own owner and
+  value; a worker or realm boundary cannot observe or borrow another one's
+  current fiber. H019 owns the carrier and teardown; H020 owns when it is
+  published.
+- **Entry and nested re-entry:** on fiber entry, save the prior value and
+  publish the entered fiber. Nested user callbacks and runtime re-entry see the
+  innermost fiber and restore the prior value in strict LIFO order, including
+  when the nested call throws. The explicit H003 operation, not an accidental
+  host global, is the source of truth for the re-entry edge.
+- **Yield and resume:** the property remains visible during the active run,
+  including finalizer/observer work reached before the run returns. When a
+  fiber yields or registers async work, restore the prior ambient value before
+  control leaves the carrier; publish it again on the resume/drain edge. A
+  suspended fiber must not remain discoverable as current on an executor that
+  is running another fiber.
+- **Throw and interruption:** restore the saved value before an exception,
+  defect, or interruption escapes the entry carrier. Preserve the selected
+  source's distinction between an ordinary user throw, `Die`, and
+  `InterruptedException`; restoring ambient state must not rewrite its Cause.
+  Interruption remains visible to the fiber while its interruptible operation
+  and selected finalizers execute, then the carrier is restored at the same
+  boundary as normal completion.
+- **Termination and late work:** termination restores and clears the owner's
+  current-fiber publication after exit/observer processing, and no dead fiber
+  is retained by the ambient carrier. A late async, scheduler, message, or
+  worker callback uses its explicit registration/cancellation token and H004
+  lifetime rows; it cannot resume by consulting stale ambient state.
+
+### 3.3 Callback exception containment and ordering
+
+The following table is the required 3.22.0 source map. “Escapes” means the
+selected source does not convert the throw at that call site; it may therefore
+escape the current run entry or be handled by an outer, separately documented
+boundary. The table is evidence, not permission to normalize all callbacks to
+defects. H020/H016 must re-audit every row after the canonical pin is chosen.
+
+| Callback or hook | Source order and containment evidence | Required lowering behavior | Owner |
+| --- | --- | --- | --- |
+| Supervisor `onResume` | `evaluateEffect` invokes it before its `try` (`fiberRuntime.ts:941-949`). | A throw escapes this evaluation boundary; publish/restore current-fiber state around it and preserve the selected escape. | H020/H016 |
+| Supervisor `onSuspend` | Runs from `evaluateEffect`'s `finally` (`:985-987`). | It runs after the body even on exit/throw; a throw escapes and follows JavaScript `finally` masking/order. Do not convert without source evidence. | H020/H016 |
+| Supervisor `onEffect` | `runLoop` calls it before the main `try` (`:1364-1366`). | A throw escapes before dispatch/catch conversion; it must not be silently turned into `Die`. | H020/H016 |
+| Scheduler `shouldYield` | Called before the main `try` (`:1371-1379`). | Preserve call order and direct escape behavior; a thrown scheduling decision is not a run-loop defect unless the selected pin proves an outer conversion. | H018/H016 |
+| Running fiber-message handlers | `drainQueueWhileRunning` dispatches the message table before the main `try` (`:1367-1369`; `:723-734`). | Handler order, one-shot behavior, and direct throw escape are observable. Do not move the drain under the dispatch catch without evidence. | H020/H018/H016 |
+| Suspended message handlers / `onFiber` | `evaluateMessageWhileSuspended` is reached from the queue-drain `try/finally` (`:902-933`, `:666-679`), while a stateful message's `onFiber` is user callback code. | Preserve the outer queue `finally` and message order; it does not provide a catch conversion for `onFiber`. Distinguish a nested `evaluateEffect` run-loop conversion from a direct `onFiber`/interruptor throw. | H020/H016 |
+| Tracer context and primitive dispatch | `currentTracer.context(() => this[(cur)._op](cur), this)` is inside the main `try` (`:1380-1406`). | A normal callback/handler throw is converted to `Die`; an `InterruptedException` gets the selected sequential defect/interruption Cause. | H020/H016 |
+| Custom `Commit` | `OP_COMMIT` dispatches `internalCall(() => op.commit())` (`:1352-1353`) inside the same `try`. | Root receiver/captures and preserve the exact run-loop conversion, invalid-op handling, and returned-effect suspension rules in §3.1. | H020/H015/H016 |
+| Exit observers and reporting | `setExitValue` reports then calls observers in reverse order (`:846-853`); `addObserver` may call immediately (`:531-540`). | Preserve report-before-observer and reverse order. There is no local blanket catch; the first observer throw stops later observers and escapes its source boundary. | H020/H016/H019 |
+| Async registration and resumption | `initiateAsync` catches `asyncRegister` throws and feeds a one-shot defect resume (`:1052-1071`); later callback calls `tell` directly. | Convert registration throw exactly as source; retain one-shot suppression and cancellation race. Do not infer the same conversion for a later callback/tell throw. | H018/H015/H016/H019 |
+| Scheduling/wakeup submission | `drainQueueLaterOnExecutor` submits through `currentScheduler.scheduleTask` (`:708-714`) outside the run-loop dispatch catch. | Preserve host submission order and its selected direct-escape/outer-boundary behavior. | H018/H016 |
+| Other service, logger, metric, and test callbacks | They are ordinary user/service calls reached from Context/FiberRefs and may occur in or outside the run-loop `try` depending on the call chain. | Track each call edge, receiver/root lifetime, current fiber/context, and exact source catch/escape site; no “all callbacks become defects” rule. | H020/H015/H016/H018 |
+
+This ordering is part of the contract. In particular, moving supervisor hooks,
+message drains, or `shouldYield` into the main catch changes observable escape
+and defect behavior even if ordinary Effect success cases are unchanged.
 
 `unsafeAsync` and its variants register a callback, retain a cancellation
 effect, optionally create an `AbortController`, and carry a `blockingOn` FiberId
@@ -296,7 +425,7 @@ public API names.
 - **Source and representation:** `internal/deferred.ts:22-46` has `Pending`
   with joiners and `Done` with a completed Effect. `internal/queue.ts:67-265`
   stores a backing queue, suspended takers, shutdown Deferred/flag, and a
-  strategy; `queue.ts:515-700` implements BackPressure, Dropping, and Sliding.
+  strategy; `Queue.ts:515-700` implements BackPressure, Dropping, and Sliding.
   `internal/pubsub.ts:225-395,406-575` contains ring/array storage,
   publisher/subscriber cursors, replay windows, and subscription cleanup.
 - **Obligations:** Deferred completes once and wakes all current joiners;
@@ -467,18 +596,91 @@ evaluation. Hare must still compile all reachable generated or prebuilt module
 code as ordinary application code and must reject any dynamic source/module
 behavior that violates Hare's closed-world rules.
 
-`GlobalValue.ts:42-58` stores process-wide singleton values on `globalThis` to
-make mixed ESM/CJS imports and reload behavior agree. `ModuleVersion.ts:10-18`
-allows a framework author to set the logical module version; the runtime checks
-Effect version metadata in `fiberRuntime.ts:1382-1396`. These are observable
-identity/version boundaries, not permission to collapse all package instances
-or silently ignore duplicate-version behavior.
+`GlobalValue.ts:42-58` stores singleton values in a Map attached to the
+executing realm's `globalThis`, using the fixed key `effect/GlobalValue`; the
+source explicitly uses this to make mixed ESM/CJS imports and reloads agree.
+`ModuleVersion.ts:10-18` forwards to a module-local version variable, initially
+`3.22.0` in the inspected tree, and allows a framework author to change it.
+`fiberRuntime.ts:1382-1396` compares an Effect value's embedded `_V` to the
+runtime version and may log a mismatch. These are observable identity/version
+boundaries, not permission to collapse all package instances or silently ignore
+duplicate-version behavior.
 
 The package exports ordinary data modules as well as interpreters. Collections,
 data types, ASTs, error objects, services, and utility modules may carry custom
 methods, lazy thunks, symbols, iterators, and user callbacks. The compiler's
 complete graph must therefore use generic JavaScript semantics first and treat
 Effect-aware recognition as a proof-driven optimization over that graph.
+
+### 5.1 GlobalValue, ModuleVersion, and package-instance ownership
+
+The selected source's identity rules require explicit ownership:
+
+- **GlobalValue owner and identity:** one `effect/GlobalValue` Map belongs to
+  one JavaScript global/realm. A VM or worker with a distinct global owns a
+  distinct Map; it is not a process-wide singleton and must not be shared by a
+  native static without an explicit realm key. H020 owns Effect identity
+  semantics and H019 owns the realm handle, roots, and disposal edge.
+- **Mixed-format duplicates:** ESM and CJS artifacts of the same selected
+  package in one realm must reuse the same global Map and the same value for an
+  equal global-value key, including reload paths. That does not make every
+  module object, prototype, Fiber, Context, or Effect value identical across
+  artifacts.
+- **Different versions or duplicate copies:** preserve the source's
+  `ModuleVersion` and `_V` comparison behavior. A duplicate package copy may
+  have a separate module-local version variable while sharing a GlobalValue key;
+  the compiler must not silently merge incompatible versions, rewrite `_V`, or
+  turn the source's mismatch observation into an arbitrary hard failure. The
+  selected-pin audit must test same-version ESM/CJS duplication and deliberate
+  different-version duplication in one realm and across realms.
+- **Per-VM/process bookkeeping:** any native registry, scheduler, tracer, or
+  cache used to implement these semantics must be keyed by the owning VM/realm
+  (and worker where applicable). Process identity is only an outer lifetime
+  boundary; it is not a substitute for realm identity or current-fiber
+  ownership.
+- **Teardown:** before a realm/VM/worker is destroyed, fibers, scopes,
+  finalizers, GlobalValue-held resources, scheduler tasks, observers, and async
+  registrations must be closed or canceled according to their selected source
+  semantics. Clear the current-fiber publication and release the realm's
+  GlobalValue Map only after late-callback tokens are closed. A callback after
+  teardown is a rejected/ignored registration event according to the selected
+  source, never a dereference of a dead realm or fiber. H019 owns teardown;
+  H018 owns host cancellation and H020 owns observable package behavior.
+
+### 5.2 H003 re-entry and H004 lifetime cross-reference
+
+H005 consumes the explicit runtime-context, call/re-entry, root, and exception
+protocol in H003's Runtime ABI section (`docs/hare/COMPILER.md`). H003 permits an
+explicit realm/runtime context but forbids hiding the current frame, PC,
+exception, completion kind, live roots, ownership ledger, or continuation in
+thread-local/global helper state. The current-fiber behavior in §3.2 must
+therefore be implemented through that existing protocol; this document does not
+invent shared IR or ABI fields. H015/H016/H019/H020 must attach each user-code
+and host callback edge to an H003 operation with explicit current fiber/Context,
+re-entry, suspension, result/exception, and root operands.
+
+H004's expanded lifetime rows are the carrier and exit ledger for the concrete
+Effect state below. The row IDs are not optional annotations: every reachable
+state must have one owner, one rooted carrier, a pin/borrow rule, and all of the
+listed normal, throw, defect, interruption, cancellation, worker-termination,
+and safepoint exits. A missing domain-specific row remains an H019 blocker.
+
+| Reachable Effect state | H004 lifetime rows to bind | Required carrier, owner, and exits |
+| --- | --- | --- |
+| FiberRuntime frame/continuations, current-fiber publication, inbox, children, and observers | H004-C01/C04/C05, H004-A03, H004-F04 | FiberRuntime handle plus explicit H003 re-entry token owns frame, queue, observer list, and current-fiber save/restore; H020/H019 own it through return, throw/defect, interruption, cancellation, worker termination, and safepoint. |
+| FiberRefs, Context, services, Layer MemoMap, and default caches | H004-C01/C05, H004-C04, H004-E01/E03/E04 | Fiber or realm-owned Map/stack roots values and service receivers; H020 owns semantics and H019 owns fork/join, scope close, cross-realm exclusion, and all exits including async rejection. |
+| Scopes, finalizers, Resource/ScopedRef state, and refresh fibers | H004-E01/E03/E04, H004-A03, H004-C05, H004-F04 | Scope owns resource, child, finalizer, refresh fiber, and original Exit; H020/H019 preserve exactly-once close, strategy/order, interruption masking, finalizer throw, worker termination, and safepoint exits. |
+| Deferred, Queue, PubSub, blocked requests, waiters, and wakeups | H004-A03, H004-E04, H004-F04, H004-C04/C05 | Deferred/queue/subscriber owner roots each waiter and cancellation token until one settlement or removal; H020/H019 preserve backpressure, cursor/order, shutdown, interruption, late callback, worker, and safepoint exits. |
+| STM journal, TRef entries, retry todos, and transactional collections | H004-E04, H004-C01/C05, H004-A03 | Transaction owns one rooted journal and todo set through validation/commit/retry; H020/H019 preserve atomic commit versus retry, wakeup, defect/failure/interruption, cancellation, worker, and safepoint exits. |
+| Channel executor, Stream chunks, Sink leftovers, buffers, and finalizers | H004-E01/E03/E04, H004-G01, H004-C01/C05, H004-F04 | Executor/scope owns current node, done stack, child, buffer, leftovers, environment, and finalizers; H020/H019 preserve pull/emit/read/yield, async rejection, throw/defect, interruption, close, worker, and safepoint exits. |
+| Schedule state, Clock/TestClock, timers, retries, and Resource refresh timing | H004-A03, H004-F02/F04, H004-C04/C05 | Schedule driver and timer registration own state, callback, and cancel token; H018/H020/H019 preserve clock substitution, ordering, cancellation race, retry termination, worker teardown, and safepoint exits. |
+| Logger/Tracer/Metric, supervisors, annotations, TestServices, and Micro fibers/scopes | H004-C01/C04/C05, H004-A03, H004-F02/F04, H004-E01 | Service/observer receiver and Micro's separate fiber engine retain their own roots and callbacks; H020/H018/H019 preserve callback containment, deterministic services, Micro-specific exits, cancellation, worker termination, and safepoint cleanup. |
+
+Ordinary Effect closure capture is not an implicit unique move. H004-E02 applies
+only where a verified move is explicit; otherwise use the managed shared roots
+and synchronization rows (H004-E03/E04 and H004-C01/C05). This is especially
+important for layer memoization, queue waiters, STM entries, stream buffers,
+and custom `Effectable` receivers.
 
 ## 6. Required downstream checkpoints
 
@@ -515,6 +717,9 @@ Unresolved decisions for the later brain review:
 3. Confirm whether the selected package's registry artifact and source tree are
    identical for the contract, and record the snapshot/hash that makes that
    answer reproducible.
-4. Keep the generic Tier 1 completeness rule and all ownership boundaries
+4. Materialize and verify the machine-readable module/export/artifact manifest
+   required in §2, including the exact ESM/CJS/generated file lists and
+   per-file hashes; do not treat a package-level hash as a substitute.
+5. Keep the generic Tier 1 completeness rule and all ownership boundaries
    unchanged unless a brain-level semantic decision explicitly supersedes this
    contract.
