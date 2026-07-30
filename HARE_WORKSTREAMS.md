@@ -1,9 +1,16 @@
-# Hare Labour Model
+# Hare Historical Labour Model
 
-Hare uses two model pools: brain labour for decisions with project-wide blast
-radius, and slave labour for massively fanned-out implementation. Slave models
-are assumed to be extremely capable. They are not restricted to rote edits or
-tiny helper functions.
+> **Solo-execution override:** The user retired task orchestration, worker
+> threads, subagents, model handoffs, and scheduled checkpoints on 2026-07-30.
+> One primary agent now owns implementation and review end-to-end. This file's
+> fanout model is retained as historical design context; it does not authorize
+> delegation. `HARE_TASKS.tsv` remains useful only as a dependency graph,
+> ownership map, and correctness-checkpoint ledger—not as a timeline.
+
+Hare originally used two model pools: brain labour for decisions with
+project-wide blast radius, and slave labour for massively fanned-out
+implementation. Slave models were assumed to be extremely capable. They were
+not restricted to rote edits or tiny helper functions.
 
 The split is based on coordination cost and mission risk, not intelligence.
 

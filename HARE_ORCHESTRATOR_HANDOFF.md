@@ -1,15 +1,29 @@
-# Hare Orchestrator Handoff
+# Hare Historical Orchestrator Handoff
 
-If you are reading this, you are taking over the conversation that turned Hare
-from a loose idea into a Bun fork and an executable labour plan. This is not a
-second architecture specification. `HARE.md` remains the product and compiler
-charter, `HARE_WORKSTREAMS.md` remains the execution model, and
-`HARE_TASKS.tsv` remains the live dependency ledger. This document carries the
-context those files cannot: what the user actually wants, what they rejected,
-how they want the models treated, and where the previous orchestrator stopped.
+This document preserves the conversation that turned Hare from a loose idea
+into a Bun fork and executable compiler plan. It is not a second architecture
+specification. `HARE.md` remains the product and compiler charter, and
+`HARE_TASKS.tsv` remains the dependency and checkpoint ledger.
 
-Read this like a letter from the person leaving the desk, not like a checklist
-generated from issue labels.
+## Current solo-execution override
+
+The user retired orchestration on 2026-07-30. Do not create worker threads,
+subagents, model handoffs, scheduled wakeups, or worktree fanout. One primary
+agent owns planning, implementation, repair, review, convergence, and testing.
+The ledger orders correctness prerequisites; it is not a schedule or a reason
+to pause between dependency-ready tasks. This override supersedes every model,
+thread, worktree, scheduling, and fanout instruction later in this historical
+handoff.
+
+The repository entered solo execution on `claude/hare-bootstrap` at
+`caef8f4154`. H001-H004 had passed their W0 checkpoints; H005 still required an
+exact Effect pin/provenance record and an exception-containment correction.
+Solo execution selected and audited `effect@3.22.0`, generated the complete
+artifact manifest, corrected the callback boundary, and closed H005. H006 and
+H007 are the next dependency-ready compiler inputs.
+
+Read the remainder like a letter from the people who left the desk, not as
+current task-management instructions.
 
 ## What The User Is Trying To Build
 
@@ -165,10 +179,10 @@ There is also no calendar plan. The user rejected the earlier day-by-day first
 week table. Use dependency and convergence waves, not promises about what day a
 compiler subsystem will exist.
 
-## Models And The Meaning Of Brain Versus Slave Labour
+## Historical Models And The Meaning Of Brain Versus Slave Labour
 
-The current user-directed model policy, which supersedes the original
-brain/slave model split below, is:
+Before solo execution, the user-directed model policy superseded the original
+brain/slave model split as follows:
 
 - use `gpt-5.6-sol` at `high` reasoning for every new planning, drafting,
   implementation, repair, and review thread, even for tiny dumped tasks;
@@ -184,7 +198,7 @@ instruction family, a complete runtime feature, an optimizer pass, a large
 error family, an adversarial review, or a repair campaign. The split is about
 blast radius and coordination, not model capability.
 
-Sol-high now owns both those missions and decisions that many workers will
+Sol-high then owned both those missions and decisions that many workers would
 amplify: the semantic and UB boundary, live JSC hook, Hare IR, runtime ABI, GC
 and safepoints, memory and pin contracts, complete Effect architecture, LLVM
 integration, and resolution of incompatible assumptions.
@@ -195,7 +209,7 @@ to change an accepted IR or ABI, or cannot reconcile a shared invariant. Route
 that decision to a separate Sol-high decision or repair thread with the exact
 conflict and owned paths.
 
-## Thread System Rules
+## Historical Thread System Rules
 
 The user forbids subagents anywhere in this orchestration hierarchy. Do not use
 the collaboration subagent tools as a fallback, and tell every worker thread
@@ -236,7 +250,7 @@ but untrustworthy implementation, it is fine to start a fresh Sol-high repair
 thread. Give the repair worker the mission packet, bad commit or diff, concrete
 findings, and exact owned paths. Do not ask it to rediscover the entire project.
 
-## Worktrees, Commits, And Integration
+## Historical Worktrees, Commits, And Integration
 
 Worker branches use `claude/hare-<task-id>-<slug>`. Wave integration branches
 use `claude/hare-w<wave>-integration`. Each active worker needs an explicit,
@@ -301,8 +315,8 @@ the worker can act rather than repeat the review.
 ## Historical First Launch
 
 The following records the original W0 launch plan. It is historical context,
-not current model-selection guidance; the Sol-high policy above controls every
-new thread.
+not current model-selection guidance; the solo-execution override forbids new
+threads.
 
 Do not spend Sol context rediscovering file locations that Luna can map. A good
 W0 start is several non-overlapping Luna investigations followed by narrowly
@@ -341,7 +355,7 @@ itself.
 Luna can draft H002, H004, and H005 from the collected evidence. Use one later
 Sol review/synthesis thread if those drafts disagree on effects, suspension,
 errors, roots, or lifetime boundaries. Do not create three Sol threads merely
-because the current ledger labels all three rows `brain`; the decision needs
+because the then-current ledger labels all three rows `brain`; the decision needs
 Sol, while most of the evidence and prose do not.
 
 Before creating any thread, list existing project threads and avoid duplicate
@@ -349,7 +363,7 @@ missions. After creating one, record its thread ID, worktree, branch, owned
 paths, and scheduled check. Do not launch H006 or H007 until H003 actually
 settles the shared representation they consume.
 
-## Current Repository State
+## Historical Repository State At The Original Handoff
 
 At the time of this handoff:
 
@@ -373,11 +387,8 @@ tools. This task did not expose `create_thread`, `list_threads`,
 were genuinely unavailable, not merely undiscovered under another name. No
 subagents were created as a workaround.
 
-Your first operational action is therefore to verify that the successor task
-has the project-thread and scheduling tools. Confirm that `gpt-5.6-luna` is
-actually selectable for project threads. If either capability is missing, tell
-the user plainly and do not silently substitute Terra, Sol, a subagent, or an
-external process.
+That capability check was specific to the retired orchestration model. It is
+not an action for solo execution and must not restart thread fanout.
 
 ## Things Not To "Improve" Backward
 
@@ -396,8 +407,7 @@ the project look safer or more conventional:
 - Do not demand green builds from intentionally incomplete fanout commits.
 - Do not start release builds or performance campaigns before correctness.
 - Do not turn convergence waves back into a daily calendar.
-- Do not silently replace the current Sol-high-for-all-work policy with a
-  cheaper model split.
+- Do not replace solo execution with model delegation or a worker split.
 - Do not use subagents anywhere in the orchestration tree.
 
 The user is comfortable with an ambitious plan and temporarily ugly compiler
@@ -408,14 +418,14 @@ status messages claiming a shard works when it was never built.
 ## How To Work With The User
 
 Be direct. Explain concrete tradeoffs when a decision has blast radius, but do
-not repeatedly ask permission for ordinary orchestration. The user has already
-authorized thread creation, worktree management, integration, repair threads,
-scheduled checks, and archiving inside `The Bun Slopfork`.
+not repeatedly ask permission for ordinary in-repository implementation,
+verification, commits, or convergence work. The user has authorized one agent
+to finish Hare and explicitly retired thread and model orchestration.
 
 They prefer ambitious simple mechanisms over defensive layers and tiny helper
-abstractions. They are happy to let strong models own hard work. Surface real
-semantic or toolchain constraints early, especially GC roots, exception state,
-pin lifetimes, LLVM compatibility, and closed-world violations. Do not turn
+abstractions. Surface real semantic or toolchain constraints early, especially
+GC roots, exception state, pin lifetimes, LLVM compatibility, and closed-world
+violations. Do not turn
 ordinary difficulty into a blocker and do not use caution as a substitute for
 doing the source archaeology.
 
