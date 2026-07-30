@@ -1,4 +1,27 @@
-This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed for speed, with a bundler, test runner, and Node.js-compatible package manager. It's written primarily in Rust with C++ for JavaScriptCore integration, powered by WebKit's JavaScriptCore engine.
+This is the Hare fork of Bun. Read `HARE.md`, `HARE_WORKSTREAMS.md`, and the
+claimed mission in `HARE_TASKS.tsv` before changing Hare code.
+
+## Hare Fork Overrides
+
+- Hare uses one `--hare` closed-world AOT mode. Unsupported defined behavior is
+  a compile error; there is no JSC runtime fallback.
+- Fanout and convergence are separate. Fanout commits and pushed wave branches
+  may intentionally contain compile or link errors.
+- Do not require a build or test for every Hare mission. Run the checkpoint
+  assigned by `HARE_TASKS.tsv`; otherwise preserve errors for the centralized
+  convergence queue.
+- Use debug incremental builds during implementation and correctness work.
+  Never run release, LTO, PGO, BOLT, or performance builds unless the mission is
+  explicitly in the release-performance wave.
+- Commit messages and status reports must state what landed without claiming an
+  intentionally incomplete shard works.
+- The testing and push requirements below apply at declared convergence gates,
+  not to intentionally incomplete Hare fanout commits.
+
+This remains an all-in-one JavaScript runtime and toolkit designed for speed,
+with a bundler, test runner, and Node.js-compatible package manager. It is
+written primarily in Rust with C++ for JavaScriptCore integration, powered by
+WebKit's JavaScriptCore engine.
 
 ## Building and Running Bun
 

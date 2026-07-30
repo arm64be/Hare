@@ -1,363 +1,422 @@
 # Hare
 
-Hare is an application-specific native compilation mode for Bun. It combines
-JavaScriptCore bytecode, Effect programs, MutMem ownership proofs, and compact
-failure backtraces into LLVM bitcode that can participate in Bun's existing
-cross-language LTO and PGO build.
+Hare is a closed-world native compiler mode for Bun. It lowers the complete
+statically reachable JavaScript, TypeScript, Effect, and Bun module graph
+through JavaScriptCore bytecode into LLVM bitcode, then links the application
+with Bun and the required runtime code under LTO and PGO.
 
 The first target is the Bun 1.4 canary lineage at upstream revision
 `bbe3f6a2629adf808adbd0da199ae8c94a3c0d47` on Linux x86-64.
 
-Hare is not a new JavaScript language and it is not a replacement for JSC. JSC
-remains the compatibility runtime, interpreter, and deoptimization target.
-Native compilation is an optimization that must never change observable
-program behavior.
+JSC is Hare's build-time JavaScript frontend and semantic reference. It is not
+an interpreter or deoptimization target in a Hare application. The final
+application does not contain JavaScript source, JSC bytecode, a bytecode
+interpreter, a JIT, or runtime JavaScript-to-bytecode compilation.
 
 ## Product Shape
 
-The intended release command is conceptually:
+Hare has one user-facing switch:
 
 ```sh
-bun build --compile --native=safe ./app.ts --outfile app
+bun build --compile --hare ./app.ts --outfile app
 ```
 
-Build modes:
+There are no user-selectable safety, fallback, profiling, or required modes.
+`--hare` means:
 
-| Mode | Meaning |
-| --- | --- |
-| `off` | Existing Bun behavior. No Hare analysis or native application code. |
-| `safe` | Compile only statically proven regions. Everything else stays in JSC. |
-| `profiled` | Add guarded specialization from a semantic training profile. |
-| `required` | Fail the build when a requested native region cannot be proven or lowered. |
+- discover the complete application graph
+- compile every reachable JavaScript function to native code
+- fail the build when defined behavior cannot be lowered
+- reject runtime-generated JavaScript that cannot be known at build time
+- emit one application-specific native executable
 
-The CLI names are provisional until the first end-to-end spike proves the
-build shape.
+`eval("literal source")`, `new Function("literal source")`, and dynamic imports
+with compile-time-known targets are additional build inputs and can be lowered.
+Source text, module targets, or functions assembled from runtime data are build
+errors. Hare never ships a compiler or interpreter as an escape hatch.
 
-## Pipeline
+## Direct Compiler Hook
 
 ```text
 TypeScript / JavaScript / Effect
               |
        Bun parser and bundler
               |
-       source and type metadata
+       source and type hints
               |
-       JSC UnlinkedCodeBlock
+     JSC UnlinkedCodeBlock        build time only
               |
-       decoded JSC bytecode
+       Hare direct hook
               |
-          Hare IR (SSA)
+     Hare IR + whole-program analysis
               |
-       ownership and type proof
+   automatic Tier 1 / Tier 2 / Tier 3 lowering
               |
           LLVM bitcode
               |
-   Bun Rust + JSC C++ + app bitcode
+   Bun Rust + JSC runtime C++ + app bitcode
               |
-     IR-PGO + LTO + rust-lld
+       LTO + PGO + rust-lld
               |
      app-specific executable
 ```
 
-The lowerer consumes JSC bytecode, but it should not begin by reverse-parsing
-the serialized `.jsc` cache. Bun currently asks JSC to encode an
-`UnlinkedCodeBlock` into an opaque cached-bytecode payload. Hare should expose a
-small C++ bridge that walks the live JSC bytecode and emits a versioned,
-machine-readable description before that representation is serialized. This
-keeps opcode semantics sourced from the exact JSC revision used by the build.
+Bun currently obtains an `UnlinkedCodeBlock` and passes it to JSC's cached
+bytecode encoder. Hare should hijack that exact point: hand the live code block
+to the Rust compiler, lower it, and skip bytecode serialization for the Hare
+artifact. A deterministic dump is useful for debugging and fanout work, but an
+intermediate external bytecode format is not part of the production pipeline.
 
-MutMem and source metadata are produced by the Bun frontend and joined to JSC
-functions using stable function identifiers and source ranges. TypeScript types
-must not be treated as proof after erasure.
+The build-time compiler can still use JSC code-block metadata, constants,
+identifiers, exception handlers, source origins, and opcode definitions. The
+application link retains only runtime helpers that native code can reach. LTO
+and section garbage collection remove the JSC parser, bytecode compiler,
+interpreter, JIT, and unused runtime paths.
 
-## Compilation Tiers
+## Automatic Native Tiers
 
-Every function has an explicit tier. Tier changes are observable in build
-reports, never inferred silently after a failure.
+Tiers are internal compiler decisions, not user modes, work phases, or feature
+subsets. One function may contain regions from multiple tiers. Hare promotes
+each region as far as its facts permit.
 
-| Tier | Internal representation | Correctness mechanism |
+| Tier | Scope | Lowering |
 | --- | --- | --- |
-| JSC | Existing bytecode/JIT | JavaScriptCore |
-| Generic native | Boxed `JSValue` and runtime calls | Exact JSC-compatible operations |
-| Profiled native | Unboxed values behind guards | Side exit or deoptimization to JSC |
-| Proven native | Unboxed values and native ownership | MutMem verifier and closed-world restrictions |
+| Tier 1 | Complete native semantics | Lower every reachable JSC bytecode operation, all Effect code, exceptions, objects, GC interactions, Result, backtrace, ownership, and pin rules using generic tagged values and optimizer-visible runtime checks. |
+| Tier 2 | Inferred and specialized native | Use type, shape, call-target, escape, effect, ownership, lifetime, and profile information to unbox values, devirtualize operations, specialize layouts, remove allocations, and turn failed speculation into a native Tier 1 path. |
+| Tier 3 | Full whole-program native | Resolve the closed graph, erase representations and checks proven unnecessary, fuse Effect control flow, lower ownership and pinning to concrete storage, use direct calls and native error edges, and expose the complete program to LLVM LTO and PGO. |
 
-Generic native code is the correctness bridge, not the performance goal. It
-lets us validate control flow, calls, exceptions, and linking before adding
-speculation. Proven native code is where stack allocation, scalar replacement,
-`noalias`, moves, and zero-cost result handling become available.
+Tier 1 is deliberately broad. It is not a tiny integer-only tier and it is not
+an interpreter written in LLVM. JavaScript semantics become ordinary native
+control flow and runtime helper calls. Helpers and checks must be expressed so
+Rust, Clang, LLVM, and the linker can inline, specialize, fold, and delete them.
+
+Tier 2 speculation never returns to JSC. A guard that cannot be proven enters
+the equivalent generic Tier 1 block. When analysis proves the guarded case is
+the only defined case, LLVM can remove both the guard and generic path.
+
+Tier 3 is the full-native result. It is not required for every input-dependent
+check to disappear, but no boxed dispatch, GC barrier, bounds check, ownership
+check, or runtime helper remains merely because Hare hid it behind an opaque
+boundary.
+
+## Defined Behavior And UB
+
+Hare's semantic contract is the pinned combination of:
+
+- ECMAScript
+- Bun's documented APIs and compatibility contracts
+- the applicable Web and Node.js specifications
+- the pinned complete Effect implementation and public contract
+- the Hare memory, pinning, Result, and backtrace specifications
+
+Defined behavior that Hare has not implemented is a compile error. It is not
+silently changed and it does not fall back to JSC.
+
+Behavior outside those specifications is undefined behavior under `--hare`.
+The optimizer may assume it does not occur. This includes violating explicit
+Hare ownership, aliasing, mutability, lifetime, or pinning contracts. Such
+contracts may lower to `llvm.assume`, alias metadata, lifetime markers, or
+equivalent facts after the verifier accepts them.
+
+TypeScript types are different. They are hints, not contracts, because ordinary
+JavaScript can violate them. A false TypeScript hint must still execute through
+correct Tier 1 native semantics unless the programmer explicitly promotes it to
+a Hare contract.
 
 ## Hard Invariants
 
-1. `--native=off` is behaviorally and structurally equivalent to upstream Bun.
-2. Unsupported bytecode falls back to JSC or fails `--native=required`; it never
-   emits guessed semantics.
-3. Native and JSC execution produce the same values, exceptions, side effects,
-   ordering, and cancellation behavior.
-4. A proof manifest is versioned and bound to the source, bundled output, JSC
-   bytecode, target triple, and compiler revision.
-5. TypeScript annotations alone never authorize unsafe memory behavior.
-6. Any JSC heap pointer live across a safepoint is visible to the collector.
-7. Any speculative guard has enough metadata to reconstruct JSC-visible state.
-8. Native borrows cannot cross unknown calls, suspension, re-entrancy, GC, or
-   storage boundaries unless the verifier has an explicit rule for it.
-9. Backtrace collection allocates and resolves strings only on failure paths.
-10. LLVM bitcode uses the exact data layout, target features, and compatible
-    LLVM version selected by Bun's build.
-11. Native compilation is deterministic for identical inputs and profiles.
-12. Performance claims include variance, memory, binary size, build time, and
-    fallback rate, not only a selected throughput number.
+1. `--hare` lowers the complete statically reachable graph or fails the build.
+2. A Hare executable contains no JavaScript source, JSC bytecode, interpreter,
+   JIT, or runtime source compiler.
+3. There is no runtime fallback to JSC. Tier 2 guards enter native Tier 1 code.
+4. Native execution preserves every behavior defined by the Hare semantic
+   contract.
+5. Behavior not defined by that contract is UB and may be used for optimization.
+6. TypeScript types and profiles are hints until verified or explicitly made
+   contractual.
+7. Explicit memory and pin contracts are verified before becoming LLVM facts.
+8. Any runtime semantic, memory, or ownership check is visible in Hare IR and
+   removable when proof makes it unreachable.
+9. Any runtime object reference live across a safepoint is visible to the
+   selected collector or region owner.
+10. Backtrace strings and captured dictionaries are materialized only after a
+    failure edge is taken.
+11. LLVM bitcode uses Bun's exact data layout, target features, and compatible
+    LLVM toolchain.
+12. Native compilation is deterministic for identical source, dependencies,
+    compiler revision, target, and profile inputs.
 
 ## Hare IR
 
-Hare IR is a small typed SSA layer between JSC bytecode and LLVM. Lowering
-directly from every JSC opcode to LLVM would mix JavaScript semantics,
-speculation, ownership, and machine representation in one unreviewable step.
+Hare IR is a typed SSA layer between JSC bytecode and LLVM. All important
+semantics appear in the IR from Tier 1 onward so later passes can reason across
+them rather than treating them as opaque runtime calls.
 
-The initial IR needs:
+The IR includes:
 
-- constants, locals, phi nodes, branches, switches, and returns
-- boxed and unboxed booleans, integers, doubles, strings, and references
-- checked arithmetic and JavaScript conversion operations
-- explicit calls, throws, catches, and side exits
-- heap loads/stores with shape and write-barrier metadata
-- safepoints and GC roots
-- ownership operations: own, move, copy, shared borrow, mutable borrow, end borrow
-- Effect operations: succeed, fail, flat-map, suspend, scope, interrupt check
-- backtrace operations that carry static error and source identifiers
+- constants, locals, phi nodes, branches, switches, loops, and returns
+- tagged and unboxed booleans, integers, doubles, strings, symbols, bigints,
+  objects, functions, and references
+- JavaScript coercion, comparison, arithmetic, property, prototype, and call
+  semantics
+- closures, generators, async functions, promises, modules, and static eval
+- explicit throws, catches, cancellation, interruption, and failure edges
+- heap and region loads/stores with shape, alias, and barrier metadata
+- safepoints, roots, regions, lifetimes, moves, copies, borrows, and pins
+- Effect nodes and scheduling operations without restricting the public API
+- Result and backtrace nodes with static error, source, and data-schema IDs
+- generic native slow paths represented as ordinary control-flow subgraphs
 
-IR validation runs after construction and after every optimization pass. A
-failed validation is a compiler error, never a reason to continue codegen.
+IR validation runs after construction and after transformations that can affect
+control flow, types, ownership, or safepoints. Validation can be deferred during
+mass fanout, but invalid IR never reaches a shipping link.
 
-## MutMem Contract
+## Type And Memory Inference
 
-The existing MutMem checker is a useful prototype, not yet a sound native
-memory proof. Hare must move its analysis into Bun's parser/type metadata path
-and define conservative escape rules for JavaScript.
+Hare replaces the current project-specific MutMem checker with a general
+whole-program type, effect, escape, alias, ownership, lifetime, and pin
+analysis. Explicit MutMem syntax remains useful input, but non-MutMem code gets
+the same inference automatically.
 
-A proven region initially forbids:
+The analysis uses a JVM-like dataflow verifier over registers, stack state,
+locals, objects, and control-flow merges. Each fact records its evidence:
 
-- `eval`, `with`, proxies, and dynamic scope changes
-- getters or setters not resolved to a proven direct target
-- monkey-patched prototypes or unresolved property shapes
-- borrowed values captured by closures
-- borrowed values stored in objects, arrays, globals, or JSC heap cells
-- mutable borrows across Effect suspension, `await`, callbacks, or re-entry
-- unknown calls while a mutable borrow is live
-- resizable or detachable buffers without an explicit pin
+| Evidence | Meaning | Compiler use |
+| --- | --- | --- |
+| Proven | Derived from bytecode semantics, constants, closed-world analysis, or a verified contract | May be used directly for correctness and optimization |
+| Guarded | Valid after an emitted native check | Tier 2 specialization with a native Tier 1 miss path |
+| Hint | TypeScript annotation, profile observation, or optimization advice | Seeds inference and code layout; never changes semantics alone |
+| Unknown | No useful fact | Tier 1 generic native representation |
 
-The verifier should reject uncertain code instead of adding runtime ownership
-machinery. The optimization strategy is to do less work after proving a small
-region, not to simulate Rust dynamically.
+The inference pass runs for all code and propagates:
 
-## Result And Backtrace Contract
+- primitive and object types
+- object shapes and prototype stability
+- call targets and closure environments
+- reads, writes, throws, suspension, cancellation, and other effects
+- allocation escape and scalar-replacement eligibility
+- unique, shared, and mutable aliases
+- moves, copies, borrows, and lifetime endpoints
+- region membership and cross-thread transfer
+- stable-address and pin requirements
 
-A native Result uses a compact tagged representation selected per function.
-The common success path must not allocate, capture a stack, copy a dictionary,
-or construct an Effect failure object.
+Runtime rules are emitted as ordinary checks and control flow, not opaque
+framework calls. LLVM can remove them when inlining, constant propagation,
+alias analysis, or whole-program reasoning proves the failure edge unreachable.
 
-Static build tables hold:
+## Generalized MutMem
 
-- literal error identifiers
-- source file, line, and column records
-- logical Effect call frames
-- data-field schemas for each failure site
+The existing MutMem API is a prototype and will change. Hare's general-purpose
+memory system has three inputs:
 
-Failure materialization may allocate and cross into Effect/JSC. Dynamic error
-data is evaluated only after the failure branch is taken. Native frames and
-logical Effect frames must merge into the same user-facing backtrace format.
+1. Facts inferred from ordinary JavaScript and TypeScript.
+2. Non-binding hints from TypeScript and optimization annotations.
+3. Explicit Hare contracts for ownership, aliasing, mutation, lifetime, and
+   pinning whose violation is UB.
 
-## Effect Contract
+The compiler should infer the common case without annotations. Explicit
+contracts exist for cases the compiler cannot prove, API boundaries, FFI, and
+programmer-directed representation choices.
 
-Hare does not initially compile arbitrary Effect internals. It recognizes a
-small, pinned Effect surface and lowers its semantics explicitly.
+Tier 1 may retain checks or generic ownership operations. Tier 2 specializes
+them. Tier 3 turns verified ownership into stack slots, regions, direct moves,
+`noalias`, lifetime markers, scalar values, or nothing at all.
 
-First synchronous subset:
+## Pinning
 
-- `Effect.succeed`
-- `Effect.fail`
-- `Effect.sync`
-- `Effect.suspend`
-- `Effect.map`
-- `Effect.flatMap`
-- `Effect.catchAll`
-- `Effect.mapError`
-- `Effect.zipRight`
+Hare pinning gives a borrow a stable storage identity across operations that
+would otherwise move or invalidate it. It is designed to avoid making `Arc` or
+heap allocation the default answer.
 
-Later subsets add scopes, finalizers, services, fibers, interruption,
-concurrency, and async state machines. Unsupported combinators remain ordinary
-Effect code in JSC. A recognized combinator is compiled only when its identity
-resolves to the pinned Effect package and has not been replaced dynamically.
+The compiler may satisfy a pin using:
+
+- a stable stack slot
+- an async or Effect continuation frame
+- a scoped region or arena
+- a pinned runtime/GC handle
+- heap promotion
+- reference counting only when ownership actually crosses independently-lived
+  or cross-thread consumers
+
+Pins can be inferred or explicit. A pinned owner may expose shared or mutable
+pin projections to fields when projection cannot invalidate the parent. A pin
+may cross suspension when the owning continuation frame is itself stable. It
+ends when the compiler proves the last pinned borrow is dead, allowing storage
+to be reclaimed or moved again where the contract permits.
+
+Tier 1 implements pin validity with explicit native state when necessary. Tier
+2 chooses cheaper carriers from escape and suspension analysis. Tier 3 erases
+pin bookkeeping when stable placement and lifetimes are fully proven.
+
+## Result And Backtrace
+
+Result and backtrace semantics exist in Tier 1 and are optimized continuously;
+they are not a late feature tier.
+
+A native Result uses a compact tagged representation selected per call graph.
+The success path does not capture a stack, copy a dictionary, allocate an
+Effect failure, or resolve source strings. Static tables hold literal error,
+source, logical Effect frame, and data-schema identifiers.
+
+Tier 1 can materialize the complete user-facing failure from native tables.
+Tier 2 propagates known result tags and removes dead failure or success edges.
+Tier 3 lowers surviving errors to direct native control flow and retains only
+failure data reachable in the final program.
+
+## Effect
+
+Hare supports all of the pinned Effect package. It does not define or ship a
+supported combinator subset.
+
+Tier 1 gets completeness by lowering Effect's complete reachable JavaScript
+implementation to native code like every other dependency. An Effect-aware IR
+pass then identifies its data representations, continuations, scopes,
+finalizers, services, fibers, interruption, scheduling, concurrency, and async
+state without depending on a small whitelist of public functions.
+
+Tier 2 specializes Effect nodes, fuses continuations, unboxes environments,
+removes known scheduler and interruption branches, and chooses storage for
+fiber and scope state. Tier 3 lowers the whole known Effect graph into native
+state machines and direct control flow wherever semantics permit.
+
+Checks required by Effect semantics remain correct native checks. Because they
+are visible in IR, LLVM may delete them when the complete program proves that
+interruption, failure, cancellation, finalization, or concurrency cannot occur
+on that path.
 
 ## Profiles
 
-Hare uses two distinct profiles:
+Hare uses two kinds of profile after correctness is established:
 
-1. A semantic profile records JSC value kinds, structures/shapes, branches,
-   calls, exceptions, and fallback frequency. It decides which speculative IR
-   is legal and useful.
-2. LLVM IR-PGO records native control-flow frequency. Bun's existing Rust and
-   C++ PGO plumbing can consume the merged profile during the final LTO link.
+1. Semantic profiles provide non-binding hints about values, shapes, calls,
+   branches, exceptions, Effect operations, and hot Tier 1 paths.
+2. LLVM IR-PGO guides native inlining, layout, and optimization across the app,
+   Rust Bun runtime, and C++ runtime code.
 
-Profile data may improve code but may never relax MutMem safety rules. Missing
-or stale semantic data falls back to generic or JSC execution.
+Profiles never define behavior or authorize memory safety. A stale or false
+semantic profile merely takes a generic native Tier 1 path.
 
-## Milestones
+## Development Build Policy
 
-### M0: Reproducible Baseline
+Correctness and coverage come before release performance. Development uses
+debug incremental builds:
 
-- Build the pinned Bun revision without Hare changes.
-- Record test, startup, throughput, RSS, binary-size, and build-time baselines.
-- Capture the exact Rust, LLVM, linker, WebKit, and Effect revisions.
-- Add a one-command focused validation harness.
+- use `bun bd` and focused debug crate builds
+- reuse one integration build directory and dependency cache
+- do not run release, LTO, PGO, BOLT, or performance builds during feature
+  fanout and compile-error convergence
+- do not require every worker commit or fanout batch to build or test
+- allow intermediate integration branches to contain large compile-error queues
+- run centralized debug builds only at convergence checkpoints
+- begin release benchmarking only after Tier 1 feature completeness and the
+  correctness corpus pass
 
-Exit gate: two clean builds agree, the selected Bun tests pass, and benchmark
-variance is understood before performance work begins.
+The initial baseline records the pinned upstream debug build, selected upstream
+behavior, incremental rebuild cost, peak build memory, and disk use. It does not
+set runtime performance targets. Runtime baselines are collected later from a
+correct release build.
 
-### M1: Bytecode Observatory
+## Engineering Waves
 
-- Add an opt-in JSC bridge that exports decoded bytecode and metadata.
-- Generate an opcode inventory from the pinned JSC source.
-- Produce deterministic JSON for small CJS and ESM fixtures.
-- Differentially compare source, cached bytecode execution, and decoded form.
+These are convergence waves for development, not user modes or Effect/JavaScript
+feature subsets.
 
-Exit gate: the observatory can describe every opcode in the selected fixtures
-without changing execution.
+### W0: Serialize The Mission
 
-### M2: Hare IR Frontend
+- Freeze the semantic contract and UB boundary.
+- Write the JSC hook, Hare IR, runtime ABI, inference, pinning, and lowering
+  contracts.
+- Generate opcode, lifetime, ownership, and feature inventories.
+- Capture the upstream debug and incremental-build baseline.
 
-- Create isolated `api.rs`, `abstract.rs`, and `impl/` crate boundaries.
-- Decode constants, locals, branches, loops, arithmetic, calls, and returns.
-- Validate control-flow graphs and SSA construction.
-- Preserve source and bytecode locations.
+Exit gate: fanout workers can implement large shards without inventing shared
+interfaces.
 
-Exit gate: fixtures round-trip into stable IR snapshots and invalid graphs are
-rejected deterministically.
+### W1: Direct Hook And Compiler Skeleton
 
-### M3: First Native Function
+- Hijack the live `UnlinkedCodeBlock` path.
+- Establish Hare IR, analysis, LLVM emission, and build integration crates.
+- Generate debug dumps and instruction tables.
+- Link one native function through the debug build.
 
-- Lower a pure integer function from JSC bytecode through Hare IR to LLVM.
-- Emit compatible bitcode and link it into a Bun executable.
-- Register a native entry trampoline and call it from JSC.
-- Compare results against JSC over generated and adversarial inputs.
+Exit gate: the build-time path reaches linked native code without serializing
+application bytecode.
 
-Exit gate: constants, arithmetic, a branch, and a loop execute from linked
-native code with no semantic differences in the supported domain.
+### W2: Tier 1 Mass Fanout
 
-### M4: Generic Runtime And Fallback
+- Fan out complete JSC instruction families across workers.
+- Lower modules, builtins, exceptions, closures, async, generators, objects,
+  runtime calls, Result, backtrace, memory rules, pinning, and all Effect code.
+- Commit large coherent shards without requiring the combined tree to compile.
+- Treat missing support as an explicit compile error, never a runtime fallback.
 
-- Define the boxed runtime ABI.
-- Add JavaScript conversions, calls, exceptions, and side exits.
-- Record why every function or operation falls back.
-- Make `--native=required` diagnostics actionable.
+Exit gate: all generated instruction and reachable-feature inventory entries
+have an implementation owner and landed code.
 
-Exit gate: unsupported operations reliably continue in JSC, including thrown
-exceptions and re-entrant calls.
+### W3: Compiler And Linker Convergence
 
-### M5: MutMem Proofs
+- Turn compiler errors into sharded work queues.
+- Then turn linker errors into sharded work queues.
+- Resolve interface drift centrally rather than letting every worker invent a
+  compatibility shim.
+- Use debug incremental builds only.
 
-- Port ownership contracts into Bun frontend metadata.
-- Add a versioned proof manifest and independent verifier.
-- Lower proven values to unboxed native storage.
-- Fuzz aliases, closures, branches, loops, exceptions, suspension, detached
-  buffers, getters, proxies, and re-entry.
+Exit gate: the full Tier 1 compiler and a representative Hare application link
+without JavaScript bytecode or runtime compilation.
 
-Exit gate: every known escape attempt is rejected or falls back, and proof
-checking is independent from proof generation.
+### W4: Correctness Convergence
 
-### M6: Result And Backtrace
+- Run upstream compatibility, differential, adversarial, generated, fuzz,
+  Effect, Result, backtrace, ownership, pinning, GC, exception, and async tests.
+- Shard each failure family to implementer and adversarial-review loops.
+- Fix systemic generators or specifications when failures share a cause.
 
-- Lower literal failures and contexts to tagged native control flow.
-- Generate static frame and error tables.
-- Materialize existing user-facing backtraces only on failure.
-- Test nested, parallel, interrupted, malformed, and data-capture failures.
+Exit gate: the complete defined Tier 1 surface passes the selected correctness
+corpus and unsupported defined behavior fails at build time.
 
-Exit gate: success has no backtrace allocation and failure output matches the
-TypeScript implementation.
+### W5: Tier 2 Fanout
 
-### M7: Effect Synchronous Subset
+- Deepen the conservative Tier 1 type and memory inference into interprocedural
+  facts for annotated and ordinary code.
+- Fan out specialization, unboxing, devirtualization, escape analysis, region,
+  pinning, Effect, Result, and generic-path optimization passes.
+- Add semantic profiling as hints.
 
-- Recognize pinned Effect combinators.
-- Fuse supported graphs into Hare IR.
-- Preserve laziness, error channels, defects, final ordering, and environment.
-- Fall back at unsupported graph boundaries.
+Exit gate: every Tier 2 guard has an exact native Tier 1 miss path and every
+optimization survives differential testing.
 
-Exit gate: differential tests cover supported compositions and hostile dynamic
-replacement of combinators.
+### W6: Tier 3 Whole-Program Native
 
-### M8: Standalone Native Build
+- Resolve closed-world calls, layouts, effects, ownership, pins, and state
+  machines across the complete graph.
+- Remove build-time-only JSC payloads and unreachable runtime compiler/JIT code.
+- Expose app and runtime bitcode to full LTO and PGO.
+- Verify the final executable contains no source, bytecode, interpreter, JIT, or
+  runtime compiler path.
 
-- Add the opt-in CLI/build API.
-- Replace payload-only standalone creation with an app-specific link step when
-  native code is present.
-- Cache runtime bitcode and unchanged native modules.
-- Retain assets, source maps, bytecode, module metadata, and cross-compilation.
+Exit gate: the target corpus builds as standalone Tier 3 native applications.
 
-Exit gate: one command emits a relocatable, app-specific executable that runs
-without the source tree.
+### W7: Performance, Hardening, And Platforms
 
-### M9: Semantic PGO And Full LTO
-
-- Record and merge semantic training profiles.
-- Generate and consume shared LLVM IR-PGO profiles.
-- Enable full release LTO and hot/cold layout.
-- Measure native coverage, guard failures, deoptimizations, and fallback rate.
-
-Exit gate: representative eligible workloads improve by at least 30 percent
-geometric mean without a whole-suite regression, excessive binary growth, or
-unreported fallback.
-
-### M10: Hardening And Platforms
-
+- Establish release baselines only now.
+- Run adversarial timing, memory, binary-size, and build-resource benchmarks.
 - Run ASAN, Miri where applicable, fuzzing, differential generation, and stress.
-- Add Linux arm64, macOS arm64/x64, Windows arm64/x64, and musl incrementally.
-- Validate reproducibility, code signing, executable formats, and crash reports.
+- Add platforms incrementally without weakening the semantic contract.
 
-Exit gate: platform support is claimed only after native and fallback paths pass
-the same correctness corpus.
-
-## First Week
-
-| Day | Judgment work | Mechanical work | Required artifact |
-| --- | --- | --- | --- |
-| 1 | Freeze semantics and integration seams | Bootstrap build and baseline collection | Baseline report |
-| 2 | Specify decoded bytecode schema and function identity | Generate opcode inventory and fixtures | Observatory RFC |
-| 3 | Specify Hare IR and runtime ABI v0 | Scaffold crates, validators, snapshots | IR RFC plus compiling crates |
-| 4 | Design native registration and fallback | Implement four pure op families and differential cases | First linked function |
-| 5 | Audit GC, exceptions, ownership, and deoptimization | Fuzz supported operations and minimize failures | Go/no-go review for M4 |
-
-The week is successful if M0 through M3 are proven on a deliberately tiny
-subset. Opcode count and benchmark speed are secondary to validating the full
-source-to-linked-native path.
-
-## Measurement Gates
-
-Every benchmark record includes:
-
-- exact commit and dirty state
-- target CPU and power mode
-- compiler, LLVM, linker, JSC, and Effect revisions
-- warmup and sample counts
-- median, p95, dispersion, and outliers
-- wall time, CPU time, peak RSS, allocations, and binary size
-- native coverage, fallback count, guard failures, and deoptimizations
-- comparison against upstream JSC and Hare with native mode disabled
-
-Only the integration worker runs timing-sensitive benchmarks. Other workers do
-not compile large projects during a benchmark window.
+Exit gate: performance and platform claims include correctness, memory, binary,
+build, and variance evidence.
 
 ## Decision Gates
 
-Stop and make an explicit architecture decision when:
+The mission-critical lane decides when:
 
-- a JSC heap reference must survive a native safepoint
-- deoptimization cannot reconstruct an exact bytecode state
-- exception scope rules differ between native and JSC execution
-- a borrow might cross suspension or re-entry
-- serialized bytecode and live `UnlinkedCodeBlock` disagree
-- LLVM versions or LTO unit settings are incompatible
-- an optimization needs runtime bookkeeping on every success path
-- a benchmark gain depends on removing observable JavaScript behavior
+- the pinned specs disagree or leave behavior undefined
+- a JSC runtime object crosses a native safepoint
+- exception, GC, Effect, or pin state cannot be represented explicitly in IR
+- a contract would need to become hidden runtime bookkeeping
+- LLVM data layouts, bitcode versions, or LTO units disagree
+- a worker needs to change a shared IR, ABI, manifest, or semantic rule
+- a proposed optimization changes defined behavior instead of exploiting UB
 
-The task queue and execution rules live in `HARE_TASKS.tsv` and
-`HARE_WORKSTREAMS.md`.
+The fanout and review process lives in `HARE_WORKSTREAMS.md`. The shared work
+queue lives in `HARE_TASKS.tsv`.
