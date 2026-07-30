@@ -396,13 +396,20 @@ it has its own closed contract.
 
 The accepted file-entry forms have these resolution and identity rules:
 
-- A relative Bun/Web string is resolved by the build-time Bun resolver against
-  the importing module's referrer, not against the executable's runtime working
-  directory. `new URL(relative, import.meta.url)` first follows the ECMAScript
-  URL algorithm using that module URL; only a resulting local `file:` graph
-  entry is admitted. A Node worker preserves Node's absolute/`./`/`../`/URL
-  filename validation, with the same build-time referrer required for an
-  admitted relative file.
+- A relative `globalThis.Worker` Bun/Web string is resolved against the
+  compiled standalone graph's project-root virtual base, not against the
+  importing module's referrer or the executable's runtime working directory.
+  The lookup joins the string to the graph's
+  `base_public_path_with_default_suffix()` and applies Bun's pinned extension
+  remapping (`./foo`, `./foo.ts`, `./foo.jsx`, and the other admitted source
+  extensions to the compiled `.js` entry). The graph-provided base is the
+  platform virtual root, such as `/$bunfs/root/` on Unix and `B:/~BUN/root/` on
+  Windows.
+- `new URL(relative, import.meta.url)` first follows the ECMAScript URL
+  algorithm using that module URL; only a resulting local `file:` graph entry
+  is admitted. An imported `node:worker_threads`.Worker retains the pinned
+  Node absolute/`./`/`../`/URL filename validation and resolution rules; its
+  target must still resolve into the closed graph.
 - The worker entry has one canonical graph identity. Its `import.meta.url`,
   module referrer, and any worker API URL/path observation use the serialized
   virtual identity for that graph entry. If the implementation cannot provide
@@ -636,6 +643,9 @@ These are the independently checked local sources for the contract:
 | `src/js/node/worker_threads.ts:25-55,946-1049` | Node worker filename validation, eval/blob conversion, option normalization, environment sharing, and preload injection. |
 | `src/jsc/bindings/webcore/WorkerOptions.h:9-37` | Native distinction between Web and Node worker identity and the worker option/state channels. |
 | `src/jsc/bindings/webcore/JSWorker.cpp:150-377` | Worker option getter/coercion order, `smol`/`ref`, preloads, env/`SHARE_ENV`, worker data, transfer, argv, and execArgv. |
+| `src/jsc/web_worker.rs:1623-1675` | Bun/Web worker relative-string resolution joins the standalone graph base and applies compiled-extension remapping. |
+| `src/resolver/standalone_module_graph.rs:16-24` | The resolver trait exposes the standalone project-root virtual base used by worker resolution. |
+| `src/standalone_graph/StandaloneModuleGraph.rs:73-75,300-302` | Platform virtual-root constants and the concrete graph implementation of the base lookup. |
 | `src/jsc/web_worker.rs:1-59` | Worker VM/event-loop lifecycle, queued startup messages, detached termination timing, and the nested-worker teardown gap. |
 | `test/js/web/workers/worker_blob.test.ts:3-64` | Bun executes JavaScript and TypeScript Blob worker source and reports resolution errors. |
 | `src/runtime/api/JSTranspiler.rs:1-20,1302-1774` | `Bun.Transpiler` exposes runtime scan/transform operations over source. |
