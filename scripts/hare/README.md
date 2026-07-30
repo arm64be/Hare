@@ -1,5 +1,38 @@
 # Hare tooling
 
+## Pinned JSC extraction inventory
+
+`generate-jsc-inventory.rb` evaluates WebKit's own `BytecodeList.rb` DSL at
+Hare's exact WebKit revision, then checks the live code-block, rare-data,
+function, constant, source, and source-key declarations used by the direct
+bridge. It writes the 320-row opcode/helper ownership table in
+`OPCODES.tsv` and the field-level extraction contract in
+`generated/hare/jsc-extraction-manifest.json`.
+
+Prepare an ignored checkout at the pinned revision and generate or verify the
+committed outputs:
+
+```sh
+git clone --filter=blob:none --no-checkout \
+  https://github.com/oven-sh/WebKit.git tmp/hare-webkit
+git -C tmp/hare-webkit sparse-checkout set --no-cone \
+  /Source/JavaScriptCore/bytecode/ \
+  /Source/JavaScriptCore/generator/ \
+  /Source/JavaScriptCore/runtime/CachedTypes.cpp \
+  /Source/JavaScriptCore/runtime/CodeCache.cpp \
+  /Source/JavaScriptCore/runtime/JSCJSValue.h \
+  /Source/JavaScriptCore/parser/
+git -C tmp/hare-webkit checkout \
+  34c01d13391e00c06862a3d2c5b7fff350ac87e0
+
+scripts/hare/generate-jsc-inventory.rb --webkit-root tmp/hare-webkit
+scripts/hare/generate-jsc-inventory.rb --webkit-root tmp/hare-webkit --check
+```
+
+The generator refuses another revision, modified pinned inputs, count drift,
+an unclassified C++ boundary member, a semantic row without extraction and
+validation destinations, or a cache-only row consumed as program meaning.
+
 ## Effect provenance manifest
 
 `generate-effect-manifest.py` verifies Hare's exact `effect@3.22.0` root pin,

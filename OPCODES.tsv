@@ -1,0 +1,321 @@
+section	opcode_id	opcode	generated_type	source_line	operand_words	widths	classification	semantic_role	owner_task	family	operands	semantic_operands	cache_only_operands	metadata_fields	checkpoints	temporaries	lowering_status
+Bytecode	0	op_tail_call_varargs	OpTailCallVarargs	90	7	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,callee,thisValue,arguments,firstFree,firstVarArg	5	1	callLinkInfo	determiningArgCount,makeCall	argCountIncludingThis	inventoried
+Bytecode	1	op_call_varargs	OpCallVarargs	110	8	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,callee,thisValue,arguments,firstFree,firstVarArg,valueProfile	5	2	callLinkInfo	determiningArgCount,makeCall	argCountIncludingThis	inventoried
+Bytecode	2	op_iterator_next	OpIteratorNext	132	10	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	done,value,iterable,next,iterator,stackOffset,nextResultValueProfile,doneValueProfile,valueValueProfile	5	4	callLinkInfo,doneModeMetadata,valueModeMetadata,iterableProfile,iterationMetadata	computeNext,getDone,getValue	nextResult	inventoried
+Bytecode	3	op_construct_varargs	OpConstructVarargs	160	8	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,callee,thisValue,arguments,firstFree,firstVarArg,valueProfile	5	2	callLinkInfo	determiningArgCount,makeCall	argCountIncludingThis	inventoried
+Bytecode	4	op_super_construct_varargs	OpSuperConstructVarargs	181	8	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,callee,thisValue,arguments,firstFree,firstVarArg,valueProfile	5	2	callLinkInfo,cachedCallee	determiningArgCount,makeCall	argCountIncludingThis	inventoried
+Bytecode	5	op_iterator_open	OpIteratorOpen	207	9	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	iterator,next,symbolIterator,iterable,stackOffset,iterableValueProfile,iteratorValueProfile,nextValueProfile	4	4	callLinkInfo,modeMetadata,arrayProfile,iterationMetadata	symbolCall,getNext		inventoried
+Bytecode	6	op_async_iterator_open	OpAsyncIteratorOpen	231	9	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	iterator,next,symbolIterator,iterable,stackOffset,iterableValueProfile,iteratorValueProfile,nextValueProfile	4	4	callLinkInfo,modeMetadata,iterationMetadata	symbolCall,getNext		inventoried
+Bytecode	7	op_instanceof	OpInstanceof	253	7	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,value,constructor,hasInstanceOrPrototype,hasInstanceValueProfile,prototypeValueProfile	4	2	hasInstanceModeMetadata,prototypeModeMetadata	getHasInstance,getPrototype,instanceof		inventoried
+Bytecode	8	op_set_private_brand	OpSetPrivateBrand	274	3	narrow,wide16,wide32	semantic	execution	H014	object_property	base,brand	2	0	oldStructureID,newStructureID,brand			inventoried
+Bytecode	9	op_check_private_brand	OpCheckPrivateBrand	284	3	narrow,wide16,wide32	semantic	execution	H014	object_property	base,brand	2	0	structureID,brand			inventoried
+Bytecode	10	op_put_by_id	OpPutById	294	5	narrow,wide16,wide32	semantic	execution	H014	object_property	base,property,value,flags	4	0	oldStructureID,offset,newStructureID,structureChain			inventoried
+Bytecode	11	op_construct	OpConstruct	308	6	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,callee,argc,argv,valueProfile	4	1	callLinkInfo			inventoried
+Bytecode	12	op_super_construct	OpSuperConstruct	320	6	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,callee,argc,argv,valueProfile	4	1	callLinkInfo,cachedCallee			inventoried
+Bytecode	13	op_tail_call	OpTailCall	333	5	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,callee,argc,argv	4	0	callLinkInfo,arrayProfile			inventoried
+Bytecode	14	op_call_direct_eval	OpCallDirectEval	345	9	narrow,wide16,wide32	semantic	execution	H017	module_eval	dst,callee,argc,argv,thisValue,scope,lexicallyScopedFeatures,valueProfile	7	1	callLinkInfo			inventoried
+Bytecode	15	op_create_generator	OpCreateGenerator	360	3	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,callee	2	0	cachedCallee			inventoried
+Bytecode	16	op_create_async_generator	OpCreateAsyncGenerator	360	3	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,callee	2	0	cachedCallee			inventoried
+Bytecode	17	op_create_promise	OpCreatePromise	373	3	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,callee	2	0	cachedCallee			inventoried
+Bytecode	18	op_catch	OpCatch	382	3	narrow,wide16,wide32	semantic	execution	H016	exception_abrupt	exception,thrownValue	2	0	buffer			inventoried
+Bytecode	19	op_new_array_with_size	OpNewArrayWithSize	391	3	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,length	2	0	arrayAllocationProfile			inventoried
+Bytecode	20	op_new_array_buffer	OpNewArrayBuffer	400	4	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,immutableButterfly,recommendedIndexingType	2	1	arrayAllocationProfile			inventoried
+Bytecode	21	op_get_by_id	OpGetById	410	5	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,property,valueProfile	3	1	modeMetadata			inventoried
+Bytecode	22	op_get_length	OpGetLength	421	4	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,valueProfile	2	1	modeMetadata,arrayProfile			inventoried
+Bytecode	23	op_profile_type	OpProfileType	432	6	narrow,wide16,wide32	cache_only	cache_only	H006	encoding_or_dispatch	targetVirtualRegister,symbolTableOrScopeDepth,flag,identifier,resolveType	0	5	typeLocation			excluded
+Bytecode	24	op_profile_control_flow	OpProfileControlFlow	444	2	narrow,wide16,wide32	cache_only	cache_only	H006	encoding_or_dispatch	textOffset	0	1	basicBlockLocation			excluded
+Bytecode	25	op_new_array_with_species	OpNewArrayWithSpecies	452	5	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,length,array,valueProfile	3	1	arrayAllocationProfile,arrayProfile			inventoried
+Bytecode	26	op_call	OpCall	465	6	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,callee,argc,argv,valueProfile	4	1	callLinkInfo,arrayProfile			inventoried
+Bytecode	27	op_call_ignore_result	OpCallIgnoreResult	478	4	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	callee,argc,argv	3	0	callLinkInfo,arrayProfile			inventoried
+Bytecode	28	op_async_iterator_next	OpAsyncIteratorNext	498	8	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,next,iterator,driver,hasValue,stackOffset,valueProfile	5	2	callLinkInfo,iterationMetadata			inventoried
+Bytecode	29	op_resolve_scope	OpResolveScope	514	6	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,scope,var,resolveType,localScopeDepth	5	0	resolveType,_0.localScopeDepth,_0.globalLexicalBindingEpoch,_1.lexicalEnvironment,_1.symbolTable,_1.constantScope,_1.globalLexicalEnvironment,_1.globalObject			inventoried
+Bytecode	30	op_get_from_scope	OpGetFromScope	542	8	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,scope,var,getPutInfo,localScopeDepth,offset,valueProfile	6	1	getPutInfo,_.watchpointSet,_.structureID,operand			inventoried
+Bytecode	31	op_put_to_scope	OpPutToScope	565	7	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	scope,var,value,getPutInfo,symbolTableOrScopeDepth,offset	6	0	getPutInfo,_.structureID,_.watchpointSet,operand			inventoried
+Bytecode	32	op_create_this	OpCreateThis	587	4	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,callee,inlineCapacity	2	1	cachedCallee			inventoried
+Bytecode	33	op_new_object	OpNewObject	597	3	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,inlineCapacity	1	1	objectAllocationProfile			inventoried
+Bytecode	34	op_new_array	OpNewArray	606	5	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,argv,argc,recommendedIndexingType	3	1	arrayAllocationProfile			inventoried
+Bytecode	35	op_put_private_name	OpPutPrivateName	617	5	narrow,wide16,wide32	semantic	execution	H014	object_property	base,property,value,putKind	4	0	property,oldStructureID,offset,newStructureID			inventoried
+Bytecode	36	op_get_private_name	OpGetPrivateName	631	5	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,property,valueProfile	3	1	structureID,offset,property			inventoried
+Bytecode	37	op_get_by_val_with_this	OpGetByValWithThis	645	6	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,thisValue,property,valueProfile	4	1	arrayProfile			inventoried
+Bytecode	38	op_get_by_val	OpGetByVal	657	5	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,property,valueProfile	3	1	arrayProfile			inventoried
+Bytecode	39	op_put_by_val	OpPutByVal	668	5	narrow,wide16,wide32	semantic	execution	H014	object_property	base,property,value,ecmaMode	4	0	arrayProfile			inventoried
+Bytecode	40	op_put_by_val_direct	OpPutByValDirect	679	5	narrow,wide16,wide32	semantic	execution	H014	object_property	base,property,value,ecmaMode	4	0	arrayProfile			inventoried
+Bytecode	41	op_in_by_val	OpInByVal	690	4	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,property	3	0	arrayProfile			inventoried
+Bytecode	42	op_enumerator_next	OpEnumeratorNext	700	6	narrow,wide16,wide32	semantic	execution	H014	object_property	propertyName,mode,index,base,enumerator	5	0	arrayProfile,enumeratorMetadata			inventoried
+Bytecode	43	op_enumerator_in_by_val	OpEnumeratorInByVal	716	7	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,mode,propertyName,index,enumerator	6	0	arrayProfile,enumeratorMetadata			inventoried
+Bytecode	44	op_enumerator_has_own_property	OpEnumeratorHasOwnProperty	730	7	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,mode,propertyName,index,enumerator	6	0	arrayProfile,enumeratorMetadata			inventoried
+Bytecode	45	op_enumerator_put_by_val	OpEnumeratorPutByVal	744	8	narrow,wide16,wide32	semantic	execution	H014	object_property	base,mode,propertyName,index,enumerator,value,ecmaMode	7	0	arrayProfile,enumeratorMetadata			inventoried
+Bytecode	46	op_to_this	OpToThis	759	4	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	srcDst,ecmaMode,valueProfile	2	1	cachedStructureID,toThisStatus			inventoried
+Bytecode	47	op_enumerator_get_by_val	OpEnumeratorGetByVal	770	8	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,mode,propertyName,index,enumerator,valueProfile	6	1	arrayProfile,enumeratorMetadata			inventoried
+Bytecode	48	op_get_by_id_direct	OpGetByIdDirect	785	5	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,property,valueProfile	3	1	structureID,offset			inventoried
+Bytecode	49	op_jneq_ptr	OpJneqPtr	798	4	narrow,wide16,wide32	semantic	control_flow	H012	control	value,specialPointer,targetLabel	3	0	hasJumped			inventoried
+Bytecode	50	op_get_argument	OpGetArgument	809	3	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,index,valueProfile	2	1				inventoried
+Bytecode	51	op_get_from_arguments	OpGetFromArguments	816	4	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,arguments,index,valueProfile	3	1				inventoried
+Bytecode	52	op_get_prototype_of	OpGetPrototypeOf	824	3	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,value,valueProfile	2	1				inventoried
+Bytecode	53	op_get_internal_field	OpGetInternalField	831	4	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,index,valueProfile	3	1				inventoried
+Bytecode	54	op_get_by_id_with_this	OpGetByIdWithThis	839	5	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,thisValue,property,valueProfile	4	1				inventoried
+Bytecode	55	op_to_object	OpToObject	848	4	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,operand,message,valueProfile	3	1				inventoried
+Bytecode	56	op_in_by_id	OpInById	856	3	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,property	3	0				inventoried
+Bytecode	57	op_has_private_name	OpHasPrivateName	863	3	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,property	3	0				inventoried
+Bytecode	58	op_has_private_brand	OpHasPrivateBrand	870	3	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,brand	3	0				inventoried
+Bytecode	59	op_put_by_id_with_this	OpPutByIdWithThis	877	5	narrow,wide16,wide32	semantic	execution	H014	object_property	base,thisValue,property,value,ecmaMode	5	0				inventoried
+Bytecode	60	op_del_by_id	OpDelById	886	4	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,property,ecmaMode	4	0				inventoried
+Bytecode	61	op_put_by_val_with_this	OpPutByValWithThis	894	5	narrow,wide16,wide32	semantic	execution	H014	object_property	base,thisValue,property,value,ecmaMode	5	0				inventoried
+Bytecode	62	op_del_by_val	OpDelByVal	903	4	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base,property,ecmaMode	4	0				inventoried
+Bytecode	63	op_put_getter_by_id	OpPutGetterById	911	4	narrow,wide16,wide32	semantic	execution	H014	object_property	base,property,attributes,accessor	4	0				inventoried
+Bytecode	64	op_put_setter_by_id	OpPutSetterById	919	4	narrow,wide16,wide32	semantic	execution	H014	object_property	base,property,attributes,accessor	4	0				inventoried
+Bytecode	65	op_put_getter_setter_by_id	OpPutGetterSetterById	927	5	narrow,wide16,wide32	semantic	execution	H014	object_property	base,property,attributes,getter,setter	5	0				inventoried
+Bytecode	66	op_put_getter_by_val	OpPutGetterByVal	936	4	narrow,wide16,wide32	semantic	execution	H014	object_property	base,property,attributes,accessor	4	0				inventoried
+Bytecode	67	op_put_setter_by_val	OpPutSetterByVal	944	4	narrow,wide16,wide32	semantic	execution	H014	object_property	base,property,attributes,accessor	4	0				inventoried
+Bytecode	68	op_define_data_property	OpDefineDataProperty	952	4	narrow,wide16,wide32	semantic	execution	H014	object_property	base,property,value,attributes	4	0				inventoried
+Bytecode	69	op_define_accessor_property	OpDefineAccessorProperty	960	5	narrow,wide16,wide32	semantic	execution	H014	object_property	base,property,getter,setter,attributes	5	0				inventoried
+Bytecode	70	op_jmp	OpJmp	969	1	narrow,wide16,wide32	semantic	control_flow	H012	control	targetLabel	1	0				inventoried
+Bytecode	71	op_jtrue	OpJtrue	974	2	narrow,wide16,wide32	semantic	control_flow	H012	control	condition,targetLabel	2	0				inventoried
+Bytecode	72	op_jfalse	OpJfalse	980	2	narrow,wide16,wide32	semantic	control_flow	H012	control	condition,targetLabel	2	0				inventoried
+Bytecode	73	op_jeq_null	OpJeqNull	986	2	narrow,wide16,wide32	semantic	control_flow	H012	control	value,targetLabel	2	0				inventoried
+Bytecode	74	op_jneq_null	OpJneqNull	992	2	narrow,wide16,wide32	semantic	control_flow	H012	control	value,targetLabel	2	0				inventoried
+Bytecode	75	op_jundefined_or_null	OpJundefinedOrNull	998	2	narrow,wide16,wide32	semantic	control_flow	H012	control	value,targetLabel	2	0				inventoried
+Bytecode	76	op_jnundefined_or_null	OpJnundefinedOrNull	1004	2	narrow,wide16,wide32	semantic	control_flow	H012	control	value,targetLabel	2	0				inventoried
+Bytecode	77	op_jeq_ptr	OpJeqPtr	1010	3	narrow,wide16,wide32	semantic	control_flow	H012	control	value,specialPointer,targetLabel	3	0				inventoried
+Bytecode	78	op_jeq	OpJeq	1017	3	narrow,wide16,wide32	semantic	control_flow	H012	control	lhs,rhs,targetLabel	3	0				inventoried
+Bytecode	79	op_jstricteq	OpJstricteq	1017	3	narrow,wide16,wide32	semantic	control_flow	H012	control	lhs,rhs,targetLabel	3	0				inventoried
+Bytecode	80	op_jneq	OpJneq	1017	3	narrow,wide16,wide32	semantic	control_flow	H012	control	lhs,rhs,targetLabel	3	0				inventoried
+Bytecode	81	op_jnstricteq	OpJnstricteq	1017	3	narrow,wide16,wide32	semantic	control_flow	H012	control	lhs,rhs,targetLabel	3	0				inventoried
+Bytecode	82	op_jless	OpJless	1017	3	narrow,wide16,wide32	semantic	control_flow	H012	control	lhs,rhs,targetLabel	3	0				inventoried
+Bytecode	83	op_jlesseq	OpJlesseq	1017	3	narrow,wide16,wide32	semantic	control_flow	H012	control	lhs,rhs,targetLabel	3	0				inventoried
+Bytecode	84	op_jgreater	OpJgreater	1017	3	narrow,wide16,wide32	semantic	control_flow	H012	control	lhs,rhs,targetLabel	3	0				inventoried
+Bytecode	85	op_jgreatereq	OpJgreatereq	1017	3	narrow,wide16,wide32	semantic	control_flow	H012	control	lhs,rhs,targetLabel	3	0				inventoried
+Bytecode	86	op_jnless	OpJnless	1017	3	narrow,wide16,wide32	semantic	control_flow	H012	control	lhs,rhs,targetLabel	3	0				inventoried
+Bytecode	87	op_jnlesseq	OpJnlesseq	1017	3	narrow,wide16,wide32	semantic	control_flow	H012	control	lhs,rhs,targetLabel	3	0				inventoried
+Bytecode	88	op_jngreater	OpJngreater	1017	3	narrow,wide16,wide32	semantic	control_flow	H012	control	lhs,rhs,targetLabel	3	0				inventoried
+Bytecode	89	op_jngreatereq	OpJngreatereq	1017	3	narrow,wide16,wide32	semantic	control_flow	H012	control	lhs,rhs,targetLabel	3	0				inventoried
+Bytecode	90	op_jbelow	OpJbelow	1017	3	narrow,wide16,wide32	semantic	control_flow	H012	control	lhs,rhs,targetLabel	3	0				inventoried
+Bytecode	91	op_jbeloweq	OpJbeloweq	1017	3	narrow,wide16,wide32	semantic	control_flow	H012	control	lhs,rhs,targetLabel	3	0				inventoried
+Bytecode	92	op_loop_hint	OpLoopHint	1040	0	narrow,wide16,wide32	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+Bytecode	93	op_switch_imm	OpSwitchImm	1042	2	narrow,wide16,wide32	semantic	control_flow	H012	control	tableIndex,scrutinee	2	0				inventoried
+Bytecode	94	op_switch_char	OpSwitchChar	1042	2	narrow,wide16,wide32	semantic	control_flow	H012	control	tableIndex,scrutinee	2	0				inventoried
+Bytecode	95	op_switch_string	OpSwitchString	1042	2	narrow,wide16,wide32	semantic	control_flow	H012	control	tableIndex,scrutinee	2	0				inventoried
+Bytecode	96	op_new_func	OpNewFunc	1053	3	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,scope,functionDecl	3	0				inventoried
+Bytecode	97	op_new_func_exp	OpNewFuncExp	1053	3	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,scope,functionDecl	3	0				inventoried
+Bytecode	98	op_new_generator_func	OpNewGeneratorFunc	1053	3	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,scope,functionDecl	3	0				inventoried
+Bytecode	99	op_new_generator_func_exp	OpNewGeneratorFuncExp	1053	3	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,scope,functionDecl	3	0				inventoried
+Bytecode	100	op_new_async_func	OpNewAsyncFunc	1053	3	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,scope,functionDecl	3	0				inventoried
+Bytecode	101	op_new_async_func_exp	OpNewAsyncFuncExp	1053	3	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,scope,functionDecl	3	0				inventoried
+Bytecode	102	op_new_async_generator_func	OpNewAsyncGeneratorFunc	1053	3	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,scope,functionDecl	3	0				inventoried
+Bytecode	103	op_new_async_generator_func_exp	OpNewAsyncGeneratorFuncExp	1053	3	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,scope,functionDecl	3	0				inventoried
+Bytecode	104	op_set_function_name	OpSetFunctionName	1070	2	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	function,name	2	0				inventoried
+Bytecode	105	op_ret	OpRet	1076	1	narrow,wide16,wide32	semantic	control_flow	H012	control	value	1	0				inventoried
+Bytecode	106	op_strcat	OpStrcat	1081	3	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,src,count	3	0				inventoried
+Bytecode	107	op_to_primitive	OpToPrimitive	1088	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,src	2	0				inventoried
+Bytecode	108	op_to_property_key	OpToPropertyKey	1094	2	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,src	2	0				inventoried
+Bytecode	109	op_to_property_key_or_number	OpToPropertyKeyOrNumber	1100	2	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,src	2	0				inventoried
+Bytecode	110	op_put_to_arguments	OpPutToArguments	1106	3	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	arguments,index,value	3	0				inventoried
+Bytecode	111	op_push_with_scope	OpPushWithScope	1113	3	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,currentScope,newScope	3	0				inventoried
+Bytecode	112	op_create_lexical_environment	OpCreateLexicalEnvironment	1120	4	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,scope,symbolTable,initialValue	4	0				inventoried
+Bytecode	113	op_create_generator_frame_environment	OpCreateGeneratorFrameEnvironment	1128	4	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,scope,symbolTable,initialValue	4	0				inventoried
+Bytecode	114	op_get_parent_scope	OpGetParentScope	1136	2	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,scope	2	0				inventoried
+Bytecode	115	op_throw	OpThrow	1142	1	narrow,wide16,wide32	semantic	execution	H016	exception_abrupt	value	1	0				inventoried
+Bytecode	116	op_throw_static_error	OpThrowStaticError	1147	2	narrow,wide16,wide32	semantic	execution	H016	exception_abrupt	message,errorType	2	0				inventoried
+Bytecode	117	op_debug	OpDebug	1153	2	narrow,wide16,wide32	cache_only	cache_only	H006	encoding_or_dispatch	debugHookType,data	0	2				excluded
+Bytecode	118	op_get_property_enumerator	OpGetPropertyEnumerator	1159	2	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,base	2	0				inventoried
+Bytecode	119	op_unreachable	OpUnreachable	1165	0	narrow,wide16,wide32	semantic	execution	H016	exception_abrupt		0	0				inventoried
+Bytecode	120	op_create_rest	OpCreateRest	1167	2	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,numParametersToSkip	2	0				inventoried
+Bytecode	121	op_yield	OpYield	1173	2	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	yieldPoint,argument	2	0				inventoried
+Bytecode	122	op_check_traps	OpCheckTraps	1179	0	narrow,wide16,wide32	semantic	execution	H016	exception_abrupt		0	0				inventoried
+Bytecode	123	op_log_shadow_chicken_prologue	OpLogShadowChickenPrologue	1181	1	narrow,wide16,wide32	cache_only	cache_only	H006	encoding_or_dispatch	scope	0	1				excluded
+Bytecode	124	op_log_shadow_chicken_tail	OpLogShadowChickenTail	1186	2	narrow,wide16,wide32	cache_only	cache_only	H006	encoding_or_dispatch	thisValue,scope	0	2				excluded
+Bytecode	125	op_resolve_scope_for_hoisting_func_decl_in_eval	OpResolveScopeForHoistingFuncDeclInEval	1192	3	narrow,wide16,wide32	semantic	execution	H017	module_eval	dst,scope,property	3	0				inventoried
+Bytecode	126	op_put_internal_field	OpPutInternalField	1199	3	narrow,wide16,wide32	semantic	execution	H014	object_property	base,index,value	3	0				inventoried
+Bytecode	127	op_nop	OpNop	1206	0	narrow,wide16,wide32	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+Bytecode	128	op_super_sampler_begin	OpSuperSamplerBegin	1208	0	narrow,wide16,wide32	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+Bytecode	129	op_wide16	OpWide16	1210	0	narrow,wide16,wide32	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+Bytecode	130	op_super_sampler_end	OpSuperSamplerEnd	1212	0	narrow,wide16,wide32	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+Bytecode	131	op_wide32	OpWide32	1214	0	narrow,wide16,wide32	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+Bytecode	132	op_enter	OpEnter	1216	0	narrow,wide16,wide32	semantic	control_flow	H012	control		0	0				inventoried
+Bytecode	133	op_get_scope	OpGetScope	1218	1	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst	1	0				inventoried
+Bytecode	134	op_create_direct_arguments	OpCreateDirectArguments	1223	1	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst	1	0				inventoried
+Bytecode	135	op_create_scoped_arguments	OpCreateScopedArguments	1228	2	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst,scope	2	0				inventoried
+Bytecode	136	op_create_cloned_arguments	OpCreateClonedArguments	1234	1	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst	1	0				inventoried
+Bytecode	137	op_new_promise	OpNewPromise	1239	1	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst	1	0				inventoried
+Bytecode	138	op_new_generator	OpNewGenerator	1244	1	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst	1	0				inventoried
+Bytecode	139	op_new_async_function_generator	OpNewAsyncFunctionGenerator	1249	1	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst	1	0				inventoried
+Bytecode	140	op_argument_count	OpArgumentCount	1254	1	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	dst	1	0				inventoried
+Bytecode	141	op_check_tdz	OpCheckTdz	1259	2	narrow,wide16,wide32	semantic	execution	H015	function_async_scope	targetVirtualRegister,identifier	2	0				inventoried
+Bytecode	142	op_new_array_with_spread	OpNewArrayWithSpread	1265	4	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,argv,argc,bitVector	4	0				inventoried
+Bytecode	143	op_spread	OpSpread	1273	2	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,argument	2	0				inventoried
+Bytecode	144	op_new_reg_exp	OpNewRegExp	1279	2	narrow,wide16,wide32	semantic	execution	H014	object_property	dst,regexp	2	0				inventoried
+Bytecode	145	op_mov	OpMov	1285	2	narrow,wide16,wide32	semantic	execution	H012	locals	dst,src	2	0				inventoried
+Bytecode	146	op_eq	OpEq	1291	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs	3	0				inventoried
+Bytecode	147	op_neq	OpNeq	1291	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs	3	0				inventoried
+Bytecode	148	op_stricteq	OpStricteq	1291	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs	3	0				inventoried
+Bytecode	149	op_nstricteq	OpNstricteq	1291	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs	3	0				inventoried
+Bytecode	150	op_less	OpLess	1291	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs	3	0				inventoried
+Bytecode	151	op_lesseq	OpLesseq	1291	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs	3	0				inventoried
+Bytecode	152	op_greater	OpGreater	1291	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs	3	0				inventoried
+Bytecode	153	op_greatereq	OpGreatereq	1291	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs	3	0				inventoried
+Bytecode	154	op_below	OpBelow	1291	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs	3	0				inventoried
+Bytecode	155	op_beloweq	OpBeloweq	1291	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs	3	0				inventoried
+Bytecode	156	op_mod	OpMod	1291	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs	3	0				inventoried
+Bytecode	157	op_pow	OpPow	1291	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs	3	0				inventoried
+Bytecode	158	op_urshift	OpUrshift	1291	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs	3	0				inventoried
+Bytecode	159	op_add	OpAdd	1313	5	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs,profileIndex,operandTypes	3	2				inventoried
+Bytecode	160	op_mul	OpMul	1313	5	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs,profileIndex,operandTypes	3	2				inventoried
+Bytecode	161	op_div	OpDiv	1313	5	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs,profileIndex,operandTypes	3	2				inventoried
+Bytecode	162	op_sub	OpSub	1313	5	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs,profileIndex,operandTypes	3	2				inventoried
+Bytecode	163	op_bitand	OpBitand	1313	5	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs,profileIndex,operandTypes	3	2				inventoried
+Bytecode	164	op_bitor	OpBitor	1313	5	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs,profileIndex,operandTypes	3	2				inventoried
+Bytecode	165	op_bitxor	OpBitxor	1313	5	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs,profileIndex,operandTypes	3	2				inventoried
+Bytecode	166	op_lshift	OpLshift	1331	4	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs,profileIndex	3	1				inventoried
+Bytecode	167	op_rshift	OpRshift	1331	4	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,lhs,rhs,profileIndex	3	1				inventoried
+Bytecode	168	op_eq_null	OpEqNull	1343	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	169	op_neq_null	OpNeqNull	1343	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	170	op_to_string	OpToString	1343	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	171	op_is_empty	OpIsEmpty	1343	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	172	op_typeof_is_undefined	OpTypeofIsUndefined	1343	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	173	op_typeof_is_object	OpTypeofIsObject	1343	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	174	op_typeof_is_function	OpTypeofIsFunction	1343	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	175	op_is_undefined_or_null	OpIsUndefinedOrNull	1343	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	176	op_is_boolean	OpIsBoolean	1343	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	177	op_is_number	OpIsNumber	1343	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	178	op_is_big_int	OpIsBigInt	1343	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	179	op_is_object	OpIsObject	1343	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	180	op_is_callable	OpIsCallable	1343	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	181	op_is_constructor	OpIsConstructor	1343	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	182	op_inc	OpInc	1365	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	srcDst,profileIndex	1	1				inventoried
+Bytecode	183	op_dec	OpDec	1365	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	srcDst,profileIndex	1	1				inventoried
+Bytecode	184	op_negate	OpNegate	1375	4	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand,profileIndex,resultType	2	2				inventoried
+Bytecode	185	op_not	OpNot	1383	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand	2	0				inventoried
+Bytecode	186	op_identity_with_profile	OpIdentityWithProfile	1390	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	srcDst,topProfile,bottomProfile	1	2				inventoried
+Bytecode	187	op_typeof	OpTypeof	1397	2	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,value	2	0				inventoried
+Bytecode	188	op_is_cell_with_type	OpIsCellWithType	1403	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand,type	3	0				inventoried
+Bytecode	189	op_has_structure_with_flags	OpHasStructureWithFlags	1410	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand,flags	3	0				inventoried
+Bytecode	190	op_to_number	OpToNumber	1417	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand,profileIndex	2	1				inventoried
+Bytecode	191	op_to_numeric	OpToNumeric	1417	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand,profileIndex	2	1				inventoried
+Bytecode	192	op_bitnot	OpBitnot	1417	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand,profileIndex	2	1				inventoried
+Bytecode	193	op_unsigned	OpUnsigned	1417	3	narrow,wide16,wide32	semantic	execution	H013	numeric_coercion	dst,operand,profileIndex	2	1				inventoried
+CLoopHelpers	194	llint_entry	-	1438	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopHelpers	195	llint_vm_entry_to_javascript	-	1439	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopHelpers	196	llint_vm_entry_to_native	-	1440	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	197	llint_program_prologue	-	1449	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	198	llint_eval_prologue	-	1450	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	199	llint_module_program_prologue	-	1451	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	200	llint_function_for_call_prologue	-	1452	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	201	llint_function_for_construct_prologue	-	1453	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	202	llint_function_for_call_arity_check	-	1454	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	203	llint_function_for_construct_arity_check	-	1455	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	204	llint_generic_return_point	-	1456	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	205	llint_throw_from_slow_path_trampoline	-	1457	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	206	llint_throw_during_call_trampoline	-	1458	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	207	llint_native_call_trampoline	-	1459	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	208	llint_native_construct_trampoline	-	1460	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	209	llint_internal_function_call_trampoline	-	1461	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	210	llint_internal_function_construct_trampoline	-	1462	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	211	llint_default_call_trampoline	-	1463	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	212	llint_virtual_call_trampoline	-	1464	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	213	llint_virtual_construct_trampoline	-	1465	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	214	llint_virtual_tail_call_trampoline	-	1466	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	215	llint_polymorphic_normal_call_trampoline	-	1467	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	216	llint_polymorphic_closure_call_trampoline	-	1468	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	217	checkpoint_osr_exit_from_inlined_call_trampoline	-	1469	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	218	checkpoint_osr_exit_trampoline	-	1470	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	219	normal_osr_exit_trampoline	-	1471	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	220	array_sort_comparator_return_trampoline	-	1472	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	221	fuzzer_return_early_from_loop_hint	-	1473	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	222	loop_osr_entry_gate	-	1474	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	223	llint_get_host_call_return_value	-	1475	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	224	llint_handle_uncaught_exception	-	1476	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	225	op_call_return_location	-	1477	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	226	op_call_ignore_result_return_location	-	1478	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	227	op_construct_return_location	-	1479	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	228	op_super_construct_return_location	-	1480	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	229	op_call_varargs_return_location	-	1481	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	230	op_construct_varargs_return_location	-	1482	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	231	op_super_construct_varargs_return_location	-	1483	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	232	op_get_by_id_return_location	-	1484	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	233	op_async_iterator_open_return_location	-	1485	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	234	op_get_by_id_direct_return_location	-	1486	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	235	op_get_length_return_location	-	1487	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	236	op_get_by_val_return_location	-	1488	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	237	op_put_by_id_return_location	-	1489	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	238	op_put_by_val_return_location	-	1490	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	239	op_put_by_val_direct_return_location	-	1491	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	240	op_in_by_id_return_location	-	1492	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	241	op_in_by_val_return_location	-	1493	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	242	op_instanceof_return_location	-	1494	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	243	op_enumerator_get_by_val_return_location	-	1495	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	244	op_enumerator_put_by_val_return_location	-	1496	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	245	op_enumerator_in_by_val_return_location	-	1497	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	246	op_iterator_open_return_location	-	1498	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	247	op_iterator_next_return_location	-	1499	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	248	op_async_iterator_next_return_location	-	1500	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	249	op_call_direct_eval_slow_return_location	-	1501	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	250	js_to_wasm_wrapper_entry	-	1502	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	251	wasm_to_wasm_ipint_wrapper_entry	-	1503	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	252	wasm_to_js_wrapper_entry	-	1504	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	253	ipint_trampoline	-	1505	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	254	ipint_entry	-	1506	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	255	ipint_catch_entry	-	1507	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	256	ipint_catch_all_entry	-	1508	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	257	ipint_table_catch_entry	-	1509	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	258	ipint_table_catch_ref_entry	-	1510	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	259	ipint_table_catch_all_entry	-	1511	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	260	ipint_table_catch_allref_entry	-	1512	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	261	js_trampoline_op_call	-	1514	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	262	js_trampoline_op_call_ignore_result	-	1515	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	263	js_trampoline_op_construct	-	1516	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	264	js_trampoline_op_super_construct	-	1517	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	265	js_trampoline_op_call_varargs	-	1518	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	266	js_trampoline_op_construct_varargs	-	1519	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	267	js_trampoline_op_super_construct_varargs	-	1520	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	268	js_trampoline_op_iterator_next	-	1521	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	269	js_trampoline_op_iterator_open	-	1522	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	270	js_trampoline_op_async_iterator_open	-	1523	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	271	js_trampoline_op_async_iterator_next	-	1524	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	272	js_trampoline_op_call_direct_eval_slow	-	1525	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	273	js_trampoline_llint_function_for_call_arity_check_untag	-	1526	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	274	js_trampoline_llint_function_for_call_arity_check_tag	-	1527	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	275	js_trampoline_llint_function_for_construct_arity_check_untag	-	1528	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	276	js_trampoline_llint_function_for_construct_arity_check_tag	-	1529	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	277	wasm_trampoline_wasm_ipint_call	-	1530	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	278	wasm_trampoline_wasm_ipint_tail_call	-	1531	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	279	wasm_throw_from_slow_path_trampoline	-	1532	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	280	wasm_throw_from_fault_handler_trampoline_reg_instance	-	1533	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+NativeHelpers	281	wasm_ipint_call_return_location	-	1534	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	282	llint_return_to_host	-	1542	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	283	llint_cloop_did_return_from_js_1	-	1543	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	284	llint_cloop_did_return_from_js_2	-	1544	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	285	llint_cloop_did_return_from_js_3	-	1545	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	286	llint_cloop_did_return_from_js_4	-	1546	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	287	llint_cloop_did_return_from_js_5	-	1547	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	288	llint_cloop_did_return_from_js_6	-	1548	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	289	llint_cloop_did_return_from_js_7	-	1549	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	290	llint_cloop_did_return_from_js_8	-	1550	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	291	llint_cloop_did_return_from_js_9	-	1551	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	292	llint_cloop_did_return_from_js_10	-	1552	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	293	llint_cloop_did_return_from_js_11	-	1553	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	294	llint_cloop_did_return_from_js_12	-	1554	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	295	llint_cloop_did_return_from_js_13	-	1555	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	296	llint_cloop_did_return_from_js_14	-	1556	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	297	llint_cloop_did_return_from_js_15	-	1557	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	298	llint_cloop_did_return_from_js_16	-	1558	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	299	llint_cloop_did_return_from_js_17	-	1559	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	300	llint_cloop_did_return_from_js_18	-	1560	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	301	llint_cloop_did_return_from_js_19	-	1561	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	302	llint_cloop_did_return_from_js_20	-	1562	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	303	llint_cloop_did_return_from_js_21	-	1563	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	304	llint_cloop_did_return_from_js_22	-	1564	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	305	llint_cloop_did_return_from_js_23	-	1565	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	306	llint_cloop_did_return_from_js_24	-	1566	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	307	llint_cloop_did_return_from_js_25	-	1567	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	308	llint_cloop_did_return_from_js_26	-	1568	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	309	llint_cloop_did_return_from_js_27	-	1569	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	310	llint_cloop_did_return_from_js_28	-	1570	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	311	llint_cloop_did_return_from_js_29	-	1571	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	312	llint_cloop_did_return_from_js_30	-	1572	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	313	llint_cloop_did_return_from_js_31	-	1573	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	314	llint_cloop_did_return_from_js_32	-	1574	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	315	llint_cloop_did_return_from_js_33	-	1575	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	316	llint_cloop_did_return_from_js_34	-	1576	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	317	llint_cloop_did_return_from_js_35	-	1577	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	318	llint_cloop_did_return_from_js_36	-	1578	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
+CLoopReturnHelpers	319	llint_cloop_did_return_from_js_37	-	1579	0	helper-id	cache_only	cache_only	H006	encoding_or_dispatch		0	0				excluded
