@@ -667,7 +667,7 @@ and safepoint exits. A missing domain-specific row remains an H019 blocker.
 
 | Reachable Effect state | H004 lifetime rows to bind | Required carrier, owner, and exits |
 | --- | --- | --- |
-| FiberRuntime frame/continuations, current-fiber publication, inbox, children, and observers | H004-C01/C04/C05, H004-A03, H004-F04 | FiberRuntime handle plus explicit H003 re-entry token owns frame, queue, observer list, and current-fiber save/restore; H020/H019 own it through return, throw/defect, interruption, cancellation, worker termination, and safepoint. |
+| FiberRuntime frame/continuations, current-fiber publication, inbox, children, and observers | H004-E17, H004-C01/C04/C05, H004-A03, H004-F04 | FiberRuntime handle plus explicit H003 re-entry token owns frame, queue, observer list, and current-fiber save/restore; H004-E17 is the dedicated ambient-state carrier/restore obligation. H020/H019 own it through return, throw/defect, interruption, cancellation, worker termination, and safepoint. |
 | FiberRefs, Context, services, Layer MemoMap, and default caches | H004-C01/C05, H004-C04, H004-E01/E03/E04 | Fiber or realm-owned Map/stack roots values and service receivers; H020 owns semantics and H019 owns fork/join, scope close, cross-realm exclusion, and all exits including async rejection. |
 | Scopes, finalizers, Resource/ScopedRef state, and refresh fibers | H004-E01/E03/E04, H004-A03, H004-C05, H004-F04 | Scope owns resource, child, finalizer, refresh fiber, and original Exit; H020/H019 preserve exactly-once close, strategy/order, interruption masking, finalizer throw, worker termination, and safepoint exits. |
 | Deferred, Queue, PubSub, blocked requests, waiters, and wakeups | H004-A03, H004-E04, H004-F04, H004-C04/C05 | Deferred/queue/subscriber owner roots each waiter and cancellation token until one settlement or removal; H020/H019 preserve backpressure, cursor/order, shutdown, interruption, late callback, worker, and safepoint exits. |
@@ -681,6 +681,10 @@ only where a verified move is explicit; otherwise use the managed shared roots
 and synchronization rows (H004-E03/E04 and H004-C01/C05). This is especially
 important for layer memoization, queue waiters, STM entries, stream buffers,
 and custom `Effectable` receivers.
+
+The current-fiber row is therefore explicitly dependent on H004-E17 in addition
+to the generic root, callback, async, and termination carriers above; omitting
+H004-E17 leaves the ambient publication and restoration ledger incomplete.
 
 ## 6. Required downstream checkpoints
 
