@@ -466,11 +466,18 @@ def add_value_flow(flow, opcode, operand, kind, point, source_line)
   entry.fetch("source_lines") << source_line
 end
 
-def scalar_operand_role(name, type)
+def scalar_operand_role(opcode, name, type)
   return "control_target" if type == "BoundLabel"
   return "argument_count" if name == "argc"
   return "argument_range_base" if name == "argv"
   return "frame_slot_base" if name == "stackOffset"
+  return "lexical_feature_flags" if name == "lexicallyScopedFeatures"
+  return "property_attributes" if name == "attributes"
+  return "structure_flags" if opcode == "op_has_structure_with_flags" && name == "flags"
+  return "scope_depth" if name == "localScopeDepth"
+  return "scope_slot_index" if %w[op_get_from_scope op_put_to_scope].include?(opcode) && name == "offset"
+  return "symbol_table_or_scope_depth" if type == "SymbolTableOrScopeDepth"
+  return "argument_index" if opcode == "op_get_argument" && name == "index"
   return "argument_index" if %w[firstVarArg numParametersToSkip].include?(name)
   return "switch_table_index" if name == "tableIndex"
   return "function_table_index" if name == "functionDecl"
@@ -876,7 +883,7 @@ sections.each do |section|
       elsif type == "VirtualRegister"
         "encoded_constant_or_register_reference"
       else
-        scalar_operand_role(argument_name, type)
+        scalar_operand_role(name, argument_name, type)
       end
       if operand_cache
         cache_operands += 1

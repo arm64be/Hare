@@ -27735,7 +27735,7 @@
       "representation": "unsigned 32-bit integer",
       "encoding": "decoded through integral Fits<unsigned, OpcodeSize>",
       "width_source": "integral Fits<unsigned, OpcodeSize>",
-      "field_role": "table_or_slot_index",
+      "field_role": "lexical_feature_flags",
       "source": {
         "path": "Source/JavaScriptCore/bytecode/BytecodeList.rb",
         "line": 345,
@@ -33256,7 +33256,7 @@
       "representation": "signed 32-bit integer",
       "encoding": "decoded through integral Fits<int, OpcodeSize>",
       "width_source": "integral Fits<int, OpcodeSize>",
-      "field_role": "element_or_field_index",
+      "field_role": "argument_index",
       "source": {
         "path": "Source/JavaScriptCore/bytecode/BytecodeList.rb",
         "line": 809,
@@ -34616,7 +34616,7 @@
       "representation": "unsigned 32-bit integer",
       "encoding": "decoded through integral Fits<unsigned, OpcodeSize>",
       "width_source": "integral Fits<unsigned, OpcodeSize>",
-      "field_role": "table_or_slot_index",
+      "field_role": "scope_depth",
       "source": {
         "path": "Source/JavaScriptCore/bytecode/BytecodeList.rb",
         "line": 542,
@@ -34660,7 +34660,7 @@
       "representation": "unsigned 32-bit integer",
       "encoding": "decoded through integral Fits<unsigned, OpcodeSize>",
       "width_source": "integral Fits<unsigned, OpcodeSize>",
-      "field_role": "table_or_slot_index",
+      "field_role": "scope_slot_index",
       "source": {
         "path": "Source/JavaScriptCore/bytecode/BytecodeList.rb",
         "line": 542,
@@ -36336,7 +36336,7 @@
       "representation": "unsigned 32-bit integer",
       "encoding": "decoded through integral Fits<unsigned, OpcodeSize>",
       "width_source": "integral Fits<unsigned, OpcodeSize>",
-      "field_role": "table_or_slot_index",
+      "field_role": "structure_flags",
       "source": {
         "path": "Source/JavaScriptCore/bytecode/BytecodeList.rb",
         "line": 1410,
@@ -47275,7 +47275,7 @@
       "representation": "unsigned 32-bit integer",
       "encoding": "decoded through integral Fits<unsigned, OpcodeSize>",
       "width_source": "integral Fits<unsigned, OpcodeSize>",
-      "field_role": "table_or_slot_index",
+      "field_role": "property_attributes",
       "source": {
         "path": "Source/JavaScriptCore/bytecode/BytecodeList.rb",
         "line": 911,
@@ -47459,7 +47459,7 @@
       "representation": "unsigned 32-bit integer",
       "encoding": "decoded through integral Fits<unsigned, OpcodeSize>",
       "width_source": "integral Fits<unsigned, OpcodeSize>",
-      "field_role": "table_or_slot_index",
+      "field_role": "property_attributes",
       "source": {
         "path": "Source/JavaScriptCore/bytecode/BytecodeList.rb",
         "line": 936,
@@ -47599,7 +47599,7 @@
       "representation": "unsigned 32-bit integer",
       "encoding": "decoded through integral Fits<unsigned, OpcodeSize>",
       "width_source": "integral Fits<unsigned, OpcodeSize>",
-      "field_role": "table_or_slot_index",
+      "field_role": "property_attributes",
       "source": {
         "path": "Source/JavaScriptCore/bytecode/BytecodeList.rb",
         "line": 927,
@@ -48207,7 +48207,7 @@
       "representation": "unsigned 32-bit integer",
       "encoding": "decoded through integral Fits<unsigned, OpcodeSize>",
       "width_source": "integral Fits<unsigned, OpcodeSize>",
-      "field_role": "table_or_slot_index",
+      "field_role": "property_attributes",
       "source": {
         "path": "Source/JavaScriptCore/bytecode/BytecodeList.rb",
         "line": 919,
@@ -48391,7 +48391,7 @@
       "representation": "unsigned 32-bit integer",
       "encoding": "decoded through integral Fits<unsigned, OpcodeSize>",
       "width_source": "integral Fits<unsigned, OpcodeSize>",
-      "field_role": "table_or_slot_index",
+      "field_role": "property_attributes",
       "source": {
         "path": "Source/JavaScriptCore/bytecode/BytecodeList.rb",
         "line": 944,
@@ -48715,7 +48715,7 @@
       "representation": "unsigned 32-bit integer",
       "encoding": "decoded through integral Fits<unsigned, OpcodeSize>",
       "width_source": "integral Fits<unsigned, OpcodeSize>",
-      "field_role": "table_or_slot_index",
+      "field_role": "scope_slot_index",
       "source": {
         "path": "Source/JavaScriptCore/bytecode/BytecodeList.rb",
         "line": 565,
@@ -48807,7 +48807,7 @@
       "representation": "tagged symbol-table index or scope depth",
       "encoding": "decoded through Fits<SymbolTableOrScopeDepth, OpcodeSize>",
       "width_source": "Fits<SymbolTableOrScopeDepth, OpcodeSize>",
-      "field_role": "typed_scalar",
+      "field_role": "symbol_table_or_scope_depth",
       "source": {
         "path": "Source/JavaScriptCore/bytecode/BytecodeList.rb",
         "line": 565,
@@ -48991,7 +48991,7 @@
       "representation": "unsigned 32-bit integer",
       "encoding": "decoded through integral Fits<unsigned, OpcodeSize>",
       "width_source": "integral Fits<unsigned, OpcodeSize>",
-      "field_role": "table_or_slot_index",
+      "field_role": "scope_depth",
       "source": {
         "path": "Source/JavaScriptCore/bytecode/BytecodeList.rb",
         "line": 514,
