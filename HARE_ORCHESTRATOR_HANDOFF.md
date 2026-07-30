@@ -167,32 +167,33 @@ compiler subsystem will exist.
 
 ## Models And The Meaning Of Brain Versus Slave Labour
 
-The required model assignment is:
+The current user-directed model policy, which supersedes the original
+brain/slave model split below, is:
 
-- `gpt-5.6-sol` at `high` reasoning for brain labour
-- `gpt-5.6-luna` at `xhigh` reasoning for slave labour
+- use `gpt-5.6-sol` at `high` reasoning for every new planning, drafting,
+  implementation, repair, and review thread, even for tiny dumped tasks;
+- give Sol large outcome-level missions where paths do not overlap, and also use
+  Sol-high for independent adversarial review; and
+- do not launch new Luna work unless the user changes this policy.
 
-Use Sol sparingly. Use Luna liberally.
+The brain/slave labels remain useful for blast radius and dependency planning,
+but they no longer select different models.
 
-Do not read "slave labour" as "give Luna trivial edits." The user considers
-Luna strong enough to build a bootloader and kernel in a long sitting. Luna can
-own an instruction family, a complete runtime feature, an optimizer pass, a
-large error family, an adversarial review, or a repair campaign. The split is
-about blast radius and coordination, not intelligence.
+Do not read "slave labour" as trivial work. A slave-lane mission may own an
+instruction family, a complete runtime feature, an optimizer pass, a large
+error family, an adversarial review, or a repair campaign. The split is about
+blast radius and coordination, not model capability.
 
-Sol belongs on decisions that many workers will amplify: the semantic and UB
-boundary, the live JSC hook, Hare IR, runtime ABI, GC and safepoints, memory and
-pin contracts, complete Effect architecture, LLVM integration, and resolution
-of incompatible assumptions. Even there, Luna can do the source archaeology,
-case collection, and first draft so Sol spends its scarce attention deciding
-rather than searching.
+Sol-high now owns both those missions and decisions that many workers will
+amplify: the semantic and UB boundary, live JSC hook, Hare IR, runtime ABI, GC
+and safepoints, memory and pin contracts, complete Effect architecture, LLVM
+integration, and resolution of incompatible assumptions.
 
 Do not escalate merely because a task is large or a branch has thousands of
-errors. Escalate when Luna is repeatedly unable to reconcile a shared
-invariant, discovers a real semantic ambiguity, needs to change an accepted IR
-or ABI, or continues in the wrong direction after focused feedback. When that
-happens, start a Sol thread to clarify or repair the high-blast decision, then
-return the broad implementation to Luna.
+errors. Escalate when a task discovers a real shared semantic ambiguity, needs
+to change an accepted IR or ABI, or cannot reconcile a shared invariant. Route
+that decision to a separate Sol-high decision or repair thread with the exact
+conflict and owned paths.
 
 ## Thread System Rules
 
@@ -204,15 +205,14 @@ All work is orchestrated through user-owned Codex threads in the attached
 project named `The Bun Slopfork`. Thread titles must be exactly shaped like:
 
 ```text
-<luna|sol> m<milestone number>: <task>
+sol m<milestone number>: <task>
 ```
 
 Examples:
 
 ```text
-luna m0: trace the live JSC bytecode handoff
 sol m0: settle the compiler contract
-luna m2: lower object and property instructions
+sol m2: lower object and property instructions
 ```
 
 Use project threads for implementation, read-only archaeology, independent
@@ -221,11 +221,10 @@ between threads explicitly instead of hoping they infer each other's work from
 a changing tree.
 
 For a one-off investigation, tell the worker to message the orchestrator with
-its findings when finished. For work that will take a while, create a one-shot
-scheduled wakeup. The initial check interval is 15 minutes. Adjust after seeing
-how the model and task behave. A source-reading task may deserve another 15 or
-20 minutes; a large implementation or debug build may deserve 30, 40, or 60.
-These are orchestration wakeups, not project deadlines.
+its findings when finished. For active Sol-high work, create a one-shot
+scheduled wakeup with an initial eight-minute interval. Increase it only for a
+known long build or similarly long-running operation. These are orchestration
+wakeups, not project deadlines.
 
 Do not busy-wait. Do not repeatedly poll an unchanged thread. Remove obsolete
 scheduled checks after the worker finishes. Archive a completed thread once its
@@ -233,11 +232,9 @@ commit is integrated, its findings are recorded, and it is no longer likely to
 receive a repair follow-up. Keep it open while its context is still useful.
 
 If a worker damages its shard, loses the invariant, or produces a repairable
-but untrustworthy implementation, it is fine to start a fresh Luna repair
+but untrustworthy implementation, it is fine to start a fresh Sol-high repair
 thread. Give the repair worker the mission packet, bad commit or diff, concrete
 findings, and exact owned paths. Do not ask it to rediscover the entire project.
-Use Sol only if the failure exposes a shared architectural decision rather than
-an implementation mistake.
 
 ## Worktrees, Commits, And Integration
 
@@ -279,7 +276,7 @@ with enough authority to solve it. A useful prompt sounds like this:
 
 ```text
 You own H0XX on branch claude/hare-H0XX-<slug> in The Bun Slopfork.
-Use gpt-5.6-luna at xhigh. Do not create subagents.
+Use gpt-5.6-sol at high. Do not create subagents.
 
 Read AGENTS.md, HARE.md, HARE_WORKSTREAMS.md, and your HARE_TASKS.tsv row.
 Your owned paths are: <paths>.
@@ -301,7 +298,11 @@ the implementer's defense. Ask the reviewer to assume the implementation is
 wrong. For repair threads, provide both the review findings and the bad diff so
 the worker can act rather than repeat the review.
 
-## Recommended First Launch
+## Historical First Launch
+
+The following records the original W0 launch plan. It is historical context,
+not current model-selection guidance; the Sol-high policy above controls every
+new thread.
 
 Do not spend Sol context rediscovering file locations that Luna can map. A good
 W0 start is several non-overlapping Luna investigations followed by narrowly
@@ -395,7 +396,8 @@ the project look safer or more conventional:
 - Do not demand green builds from intentionally incomplete fanout commits.
 - Do not start release builds or performance campaigns before correctness.
 - Do not turn convergence waves back into a daily calendar.
-- Do not reduce Luna to tiny mechanical edits.
+- Do not silently replace the current Sol-high-for-all-work policy with a
+  cheaper model split.
 - Do not use subagents anywhere in the orchestration tree.
 
 The user is comfortable with an ambitious plan and temporarily ugly compiler
