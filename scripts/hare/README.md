@@ -1,5 +1,8 @@
 # Hare baseline harness
 
+See [H001_BASELINE.md](H001_BASELINE.md) for the committed provenance and
+results record from the pinned baseline run.
+
 Run from the repository root:
 
 ```sh
