@@ -98,13 +98,19 @@ The proof may use:
   the union of both branches;
 - an intrinsic conversion whose exact result is proven, including the
   ECMAScript `ToString` behavior required by the operation; and
-- an exact unreachable-code proof that removes a load which cannot execute.
+- an exact unreachable-code proof that removes a load which cannot execute; and
+- a whole-program-proven pure user-function call whose arguments, return value,
+  and lack of observable effects are all established by the analysis. Such a
+  call may contribute a finite result just like an intrinsic. This does not
+  admit arbitrary user calls merely because their current result is visible to
+  the compiler.
 
-The proof must reject or remain unknown when a value can come from a user call,
-getter, Proxy, `process.env`, filesystem or network input, randomness, FFI,
-unbounded string construction, an unresolved package condition, or a profile.
-The proof also fails if any member is missing, external to the artifact, or
-resolves differently under an unrecorded import condition.
+The proof must reject or remain unknown when a value can come from an unknown
+or effectful user call, getter, Proxy, `process.env`, filesystem or network
+input, randomness, FFI, unbounded string construction, an unresolved package
+condition, or a profile. The proof also fails if any member is missing,
+external to the artifact, or resolves differently under an unrecorded import
+condition.
 
 Examples:
 
@@ -131,6 +137,12 @@ build time, and any source they contain is recursively subject to this
 contract.
 
 ### 5.1 `eval`: direct and indirect
+
+H002 specifies the observable context and result of admitted direct and
+indirect evaluation. The field layout, ownership, and lifetime of the
+compiler/runtime adapters that carry that context are owned by H003; see the
+H003 `DirectEvalContext` and `FunctionExecutable` sections in
+`docs/hare/COMPILER.md`. H002 does not define those ABI details.
 
 The direct/indirect distinction is semantic. Hare must use the ECMAScript
 direct-eval rule: a call is direct only when the evaluated reference has the
@@ -181,6 +193,28 @@ new Function(runtimeBody);                   // compile error: unknown body
 The admission of `eval` and `Function` does not admit arbitrary APIs that happen
 to receive literal source. Those APIs are classified in section 8.
 
+### 5.3 Parser-failure edges
+
+The failure class depends on where source compilation occurs. A syntax failure
+in the root entry, a statically imported or re-exported module, or an admitted
+static worker module is a root/module graph parser failure and is a build
+diagnostic. The compiler may inspect an admitted literal `eval` or
+`Function`/`new Function` body while building, but a failure in that source is
+an executable throw edge: the call or construction must produce the ordinary
+catchable `SyntaxError` at runtime, with normal evaluation order and without
+turning the whole artifact into a build failure.
+
+```js
+try { eval(")"); } catch (error) { console.log(error instanceof SyntaxError); }
+try { new Function("return )"); } catch (error) { console.log(error instanceof SyntaxError); }
+```
+
+Both examples are preserved when the intrinsic identity and source strings are
+proven. In contrast, malformed root/module source is rejected before an
+executable exists, and unknown runtime source remains a defined compile error;
+neither case is a runtime `SyntaxError` edge that a surrounding `try` can make
+admissible.
+
 ## 6. Modules, imports, and graph observability
 
 ### 6.1 ESM and dynamic import
@@ -208,6 +242,17 @@ import(runtimeSpecifier).catch(() => {});
 `allowUnresolved`, an `external` configuration, a promise rejection handler,
 or a profile cannot turn any of these into a closed Hare graph.
 
+The finite proof establishes graph membership only. It does not pre-evaluate
+the import call or erase its runtime work. At execution the call still
+evaluates the specifier and applies its required `ToString`, evaluates the
+options object, observes import-attribute property getters and Proxy traps,
+and uses the active realm, referrer, and import conditions. It preserves
+evaluation order, module evaluation and top-level-await ordering, and the
+specified conversion of an abrupt import operation into the rejected Promise
+returned by `import()` (including the original thrown value). A proven target
+therefore permits the graph edge; it is not permission to replace dynamic
+import with a cached namespace lookup.
+
 ### 6.2 CommonJS loading, cache, and cycles
 
 Hare preserves the semantics of an admitted literal or finite-target:
@@ -225,12 +270,58 @@ Overridden `Module.prototype.require`, reassigned loader functions, unknown
 `paths` options, and runtime-selected requests are compile errors unless Hare
 has an equally precise contract for them.
 
-The resolved module identity is the cache key. The cache entry is created
-before evaluating a CommonJS module, so a cycle can observe the partially
-initialized exports object. A successful second load returns the same cached
-module without re-executing it. A failed load removes the provisional entry in
-the same cases as the pinned Bun loader. ESM/CJS wrappers and interop are part
-of the result; they are not optional bundler conveniences.
+The following is the cache and cycle state machine for every admitted CJS
+load. It is part of the observable contract, including `require.cache` and
+module graph metadata:
+
+1. Resolve the request with the importing module, loader kind, and applicable
+   conditions. The resulting canonical identity `K` is the cache key. A
+   query-bearing suffix is part of `K`; the path portion is used only where a
+   native-extension operation needs a filename. Builtins are canonicalized
+   separately.
+2. In state `Absent`, create the module record with `id`/`filename` `K`, an
+   empty `exports` object, `loaded = false`, and its `parent`. Insert it into
+   the `require.cache`-backed registry before evaluation and add the child to
+   the parent's `children` list in load order. This is state `Loading`.
+3. In state `Loading`, a recursive require of `K` returns that same provisional
+   `exports` object. This is the cycle observation point; it never creates a
+   second record. In state `Loaded`, return the same record/exports without
+   re-execution.
+4. On successful CommonJS evaluation, set `loaded = true` and transition to
+   `Loaded`. On an ESM interop load, use the ESM registry for `K`, wait for the
+   synchronous interop path required by `require`, and expose the pinned
+   namespace/`module.exports` result without creating a duplicate module
+   identity. A graph containing top-level-await that cannot complete the
+   synchronous require contract is a defined compile error (or the same
+   specified runtime error when the loader reaches it); it is never silently
+   treated as an empty exports object.
+5. A resolution failure occurs before insertion: it propagates synchronously
+   and creates no cache entry or child link. For a parse/evaluation throw or
+   ESM interop failure after insertion, transition through `Error`: delete the
+   provisional `K` entry from `require.cache`/the internal registry, so the
+   next require retries the load, and propagate the original failure
+   synchronously. The failed attempt does not leave a stale cache hit. The
+   failed module object and its `parent` relationship remain observable through
+   any references retained by the program, and its `children` insertion is not
+   retroactively erased. A retry creates a new module record and a new child
+   insertion; a second require of a still-cached successful record does not add
+   another child insertion.
+
+`require.cache[K]` is the observable registry: reads, own-key enumeration,
+`in`, deletion, and replacement participate in the state machine. Deleting a
+key evicts the corresponding CJS/interop entry; replacing a key supplies the
+value returned by a subsequent admitted load, subject to the selected loader's
+observable module shape. A cache mutation whose key or effect is not statically
+representable is a defined compile error, not permission to ignore the
+mutation.
+
+For a builtin, `node:K` uses the canonical builtin implementation and does not
+create a user module cache entry. When an unprefixed builtin resolves to
+`node:K`, the unprefixed spelling may read an existing user cache alias as Bun
+does, but builtin loading never writes that alias; this distinction is
+observable through `require.cache`. ESM/CJS wrappers, namespace/default
+interop, and the `__esModule` behavior are part of the result, not optional
+bundler conveniences.
 
 ```js
 // cjs-a.cjs
@@ -272,23 +363,56 @@ H002 therefore makes the following decision explicit:
    (reject until specified), while the exact path/URL spelling is deferred to a
    path contract. No other graph rule depends on that spelling.
 
-Static asset imports remain admissible when their bytes are build inputs. The
-asset loader must embed the bytes or package them in the declared artifact and
-must provide a stable virtual identity when the imported value is a path. It
-must not derive the value from the process's runtime working directory. The
-current Bun compile corpus observes `$bunfs`-style paths on Unix and a
-Windows-specific virtual spelling (`test/bundler/bundler_compile.test.ts:526-542`)
-and preserves embedded asset names and contents across a changed working
-directory (`test/regression/issue/31575.test.ts:7-67`). Those observations are
-evidence for the required contract, not a silent H002 promise of an unpinned
-public path format.
+Static asset imports remain admissible when their bytes or decoded data are the
+complete observable value. A byte/string/JSON data loader must embed its input
+and preserve the exact value, decoding, and failure behavior without consulting
+the runtime working directory.
+
+An asset loader form whose value exposes a path or URL is a defined compile
+error in H002. This includes file/path loaders, `Bun.embeddedFiles` path/name
+observation, and passing such an imported value to a path-observing API such as
+`Bun.file` or a worker constructor. H002 does not invent a `$bunfs` spelling or
+map a host path into the executable. These forms become admissible only after a
+later virtual-path contract specifies the exact identity, normalization,
+platform spelling, query handling, and failure behavior. The current Bun
+compile corpus observes `$bunfs`-style paths on Unix and a Windows-specific
+virtual spelling (`test/bundler/bundler_compile.test.ts:526-542`) and preserves
+embedded asset names and contents across a changed working directory
+(`test/regression/issue/31575.test.ts:7-67`); those are evidence for the open
+contract, not a public H002 path guarantee.
 
 ## 7. Workers and other graph entries
 
 ### 7.1 Admitted static workers
 
 A worker whose entry is a statically resolved file/module is an additional graph
-entry. These forms are admissible when the URL/path and all preload entries are
+entry. The constructor identity is part of the proof. `globalThis.Worker` is
+Bun's Web-compatible worker form (`WorkerOptions.Kind::Web`); an imported
+`node:worker_threads`.Worker is the Node adapter over the same native worker
+with its Node event-emitter, `workerData`, `parentPort`, thread-id, and stdio
+surface (`WorkerOptions.Kind::Node`). A shadowed or user-defined constructor is
+not silently treated as either intrinsic and is a defined compile error unless
+it has its own closed contract.
+
+The accepted file-entry forms have these resolution and identity rules:
+
+- A relative Bun/Web string is resolved by the build-time Bun resolver against
+  the importing module's referrer, not against the executable's runtime working
+  directory. `new URL(relative, import.meta.url)` first follows the ECMAScript
+  URL algorithm using that module URL; only a resulting local `file:` graph
+  entry is admitted. A Node worker preserves Node's absolute/`./`/`../`/URL
+  filename validation, with the same build-time referrer required for an
+  admitted relative file.
+- The worker entry has one canonical graph identity. Its `import.meta.url`,
+  module referrer, and any worker API URL/path observation use the serialized
+  virtual identity for that graph entry. If the implementation cannot provide
+  that exact identity without consulting a host path, the worker form is a
+  defined compile error; no runtime cwd lookup is allowed.
+- URL/path normalization, query identity, and import conditions are performed
+  by the pinned resolver before linking. A remote URL, a `data:`/`blob:` URL,
+  or a path that is not a graph member is not a file worker input.
+
+These forms are admissible when the entry and all user preload entries are
 known and resolve at build time:
 
 ```js
@@ -299,12 +423,50 @@ new Worker(new URL("./worker.ts", import.meta.url).href, {
 });
 ```
 
-The native worker must preserve the applicable Bun/Web/Node behavior: separate
-worker global state, module evaluation, structured cloning and transfer,
-message ordering, error events, termination/close behavior, ref/unref behavior,
-and worker-data or environment semantics. A worker build failure remains a
-build error; a runtime exception in an admitted worker remains a runtime worker
-error.
+The admitted option and context contract is:
+
+| Surface | Preserved meaning | H002 admission rule |
+| --- | --- | --- |
+| `name` | The selected API's string name and worker identity/debug observation. | The value and required coercion must be lowerable; an unsupported shape is a defined compile error. |
+| `preload` | A string or ordered array of module entries evaluated before the worker entry. The Node adapter's internal `node:worker_threads` bootstrap preload is also present before user preloads. | Every user entry is a closed graph edge. Unknown or runtime-generated preload targets are defined compile errors. |
+| Bun/Web `env` | An environment snapshot for the worker; `node:worker_threads.SHARE_ENV` selects the shared environment store. | Object enumeration, value stringification, and the share-vs-snapshot choice remain observable. Unsupported env shapes are compile errors. |
+| Node `workerData` and Bun `data` | Structured-cloned initial data, including the selected transfer-list detach/transfer behavior. The Node adapter exposes it as `workerData`; Bun's native form accepts its data alias. | The value may be runtime data, but unsupported clone/transfer forms are compile errors rather than silently copied. |
+| `ref` / `ref()` / `unref()` | Parent event-loop keepalive only; it does not stop or pause worker execution. The pinned defaults and transitions are preserved. | A dynamic call is allowed only when its receiver is the admitted worker; unknown worker identity is a compile error. |
+| Bun `smol` | Selects the Bun small-heap worker configuration; it does not alter graph membership, realm identity, or message semantics. | Supported as the Bun/Web boolean option; unsupported heap/resource options are compile errors. |
+| Node `argv`, `execArgv` | Ordered worker `process.argv`/`Bun.argv` additions and inherited or explicit exec arguments. | Arrays and element stringification follow the selected adapter; unsupported argument/resource options are compile errors. |
+| Node `stdin`, `stdout`, `stderr` | The Node adapter's captured stream objects and their message/close timing. | Supported only with the Node adapter and its defined boolean forms; unsupported stream/resource options are compile errors. |
+| `type`, `credentials` | Bun's documented no-op compatibility fields remain no-ops; option property evaluation still follows normal JavaScript order. | They are not silently given new meaning. Fields such as `resourceLimits`, `trackUnmanagedFds`, or unknown Bun/Node options are defined compile errors until contracted. |
+
+Each admitted worker creates a distinct realm/VM and global object. The worker's
+`globalThis`, `self`, module scope, `import.meta`, `process`, and Node worker
+bindings are worker-local; no parent lexical environment or mutable global is
+captured. Only the explicitly specified structured data, environment mode,
+preloads, and argument channels cross the boundary. A worker runtime exception
+is reported through the selected API's worker error surface, not as a throw in
+the parent constructor.
+
+Construction, entry evaluation, and messaging retain their event ordering:
+messages posted before the worker reaches its running/online point are queued
+and delivered FIFO, message/error events are dispatched as parent event-loop
+tasks with the selected API's microtask boundaries, and preload or entry
+failures reach the worker error/exit or close sequence required by that API.
+The Node adapter preserves `online`, `message`, `messageerror`, `error`, and
+`exit` observations; the Bun/Web form preserves its `message`, `messageerror`,
+`error`, and `close` observations. `terminate()` suppresses later user events
+according to the pinned implementation and settles with the selected API's
+documented result. The native Bun implementation is detached: termination can
+settle before the OS thread has fully exited. H002 preserves that observable
+timing and does not claim a stronger join guarantee.
+
+Nested workers are not admitted. If an admitted worker's reachable graph can
+construct another worker, even with a finite static child target, the build is
+a defined compile error until a nested-worker registration, teardown, and
+parent-context lifetime contract exists. This closes the current native gap in
+which a worker context does not stop nested workers during teardown.
+
+A worker build or graph-resolution failure remains a build error; a runtime
+exception, message-clone failure, or termination race in an admitted worker
+remains the selected worker API's runtime behavior.
 
 ### 7.2 Source and runtime worker targets
 
@@ -318,6 +480,13 @@ These are defined APIs but are not admitted source inputs by H002:
 | `new Worker(URL.createObjectURL(new Blob(["literal source"])))` | Defined compile error | A literal Blob worker is a different source-loading API and H002 does not define its realm, URL, MIME/loader, and worker graph semantics. |
 | `importScripts(runtimeUrl)` | Defined compile error | Runtime worker graph discovery. |
 | `new Worker(new URL("./worker.ts", import.meta.url))` | Preserved | The file entry and its graph are statically known. |
+
+The same compile-error verdict applies to a static worker with an unsupported
+option, an unknown preload, a path/URL observation lacking the virtual identity
+above, or a nested worker construction. A literal source worker is not rescued
+by the fact that its text is known: `{ eval: true }`, Blob URLs, and data URLs
+are separate source-loading APIs whose runtime realm, URL, and lifecycle
+contract H002 does not admit.
 
 This explicit rejection is deliberate: a future contract may admit literal
 Blob/data workers only after defining their source provenance, loader, URL
@@ -414,17 +583,26 @@ or a promise/error handler to hide an open edge:
 
 | Category | Example | H002 verdict |
 | --- | --- | --- |
+| Root/module parser failure | Malformed `app.ts` or a statically imported module | Defined build error; this is not a catchable runtime edge. |
 | Static ESM | `import { value } from "./value.js"` | Preserved; include transitive graph and live bindings. |
 | Static re-export | `export * from "./value.js"` | Preserved; include transitive graph. |
 | Finite dynamic import | `import(flag ? "./a.js" : "./b.js")` | Preserved if both resolve; include both. |
+| Finite proof with pure call | `import(wholeProgramPurePath())` where the exact singleton result is proven | Preserved; the proof admits graph membership but runtime import evaluation remains. |
+| Import runtime observability | `import(specifier, optionsProxy)` where both target values are finite | Preserved only with the graph closed; retain specifier/options evaluation, traps, referrer/realm/conditions, ordering, and rejected-Promise edges. |
 | CJS literal | `require("./a.cjs")` | Preserved; retain wrapper/cache/cycle behavior. |
+| CJS cache failure | `delete require.cache[key]; require("./a.cjs")` after a throwing first load | Preserved with provisional insertion, error cleanup, retry, and `parent`/`children` observations. |
 | Builtin | `require("node:fs")` | Preserved through the admitted Bun builtin. |
 | Direct literal eval | `eval("let x = 1; x")` | Preserved with direct lexical/strictness semantics. |
+| Admitted eval syntax failure | `try { eval(")") } catch (e) { e instanceof SyntaxError }` | Preserved as a runtime-catchable `SyntaxError`; it is not a root build failure. |
 | Indirect literal eval | `(0, eval)("globalThis.x = 1")` | Preserved with global semantics. |
 | Literal Function | `new Function("a", "return a + 1")` | Preserved with global-function semantics. |
+| Admitted Function syntax failure | `try { new Function("return )") } catch (e) { e instanceof SyntaxError }` | Preserved as a runtime-catchable `SyntaxError`; it is not a root build failure. |
 | Non-string eval | `eval(42)` | Preserved as `42`; no source input. |
-| Static asset | `import path from "./asset.txt" with { type: "file" }` | Preserved if embedded and virtual identity is provided. |
+| Static asset data | `import text from "./asset.txt" with { type: "text" }` | Preserved when the exact decoded value is specified; no path is exposed. |
+| Static asset path observation | `import path from "./asset.txt" with { type: "file" }` | Defined compile error until the exact virtual path/URL contract exists. |
 | Static worker | `new Worker(new URL("./worker.ts", import.meta.url))` | Preserved; include worker graph. |
+| Worker unsupported option | `new Worker("./worker.ts", { resourceLimits: { maxOldGenerationSizeMb: 1 } })` | Defined compile error; the option is not silently ignored. |
+| Nested worker | A statically reachable worker module constructs another `Worker` | Defined compile error until nested-worker lifetime/teardown semantics are contracted. |
 | Runtime eval | `eval(await readSource())` | Defined compile error. |
 | Runtime Function | `new Function(runtimeBody)` | Defined compile error. |
 | Runtime import | `import(process.env.PLUGIN)` | Defined compile error. |
@@ -455,6 +633,10 @@ These are the independently checked local sources for the contract:
 | `test/bundler/bundler_allow_unresolved.test.ts:100-173` | Empty unresolved policy rejects dynamic import, require, and require.resolve, including try/catch. |
 | `src/js/node/vm.ts:92-119` | `runIn*` and `createScript` accept source strings and construct scripts. |
 | `src/js/node/worker_threads.ts:946-973` | Node worker `{ eval: true }` converts source into a Blob URL. |
+| `src/js/node/worker_threads.ts:25-55,946-1049` | Node worker filename validation, eval/blob conversion, option normalization, environment sharing, and preload injection. |
+| `src/jsc/bindings/webcore/WorkerOptions.h:9-37` | Native distinction between Web and Node worker identity and the worker option/state channels. |
+| `src/jsc/bindings/webcore/JSWorker.cpp:150-377` | Worker option getter/coercion order, `smol`/`ref`, preloads, env/`SHARE_ENV`, worker data, transfer, argv, and execArgv. |
+| `src/jsc/web_worker.rs:1-59` | Worker VM/event-loop lifecycle, queued startup messages, detached termination timing, and the nested-worker teardown gap. |
 | `test/js/web/workers/worker_blob.test.ts:3-64` | Bun executes JavaScript and TypeScript Blob worker source and reports resolution errors. |
 | `src/runtime/api/JSTranspiler.rs:1-20,1302-1774` | `Bun.Transpiler` exposes runtime scan/transform operations over source. |
 | `src/runtime/api/JSBundler.rs:1-2,805-818,1341-1377` | `Bun.build` accepts entrypoints, plugins, and runtime build configuration. |
