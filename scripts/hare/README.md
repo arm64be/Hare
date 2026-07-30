@@ -3,9 +3,10 @@
 ## Pinned JSC extraction inventory
 
 `generate-jsc-inventory.rb` evaluates WebKit's own `BytecodeList.rb` DSL at
-Hare's exact WebKit revision, then checks the live code-block, rare-data,
-function, constant, source, and source-key declarations used by the direct
-bridge. It writes the 320-row opcode/helper ownership table in
+Hare's exact WebKit revision, consumes `BytecodeUseDef.cpp` for register and
+checkpoint flow, then checks the live code-block, rare-data, function,
+constant, source, and source-key declarations used by the direct bridge. It
+writes the 320-row opcode/helper ownership table in
 `OPCODES.tsv` and the field-level extraction contract in
 `generated/hare/jsc-extraction-manifest.json`.
 

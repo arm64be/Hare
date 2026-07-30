@@ -18,6 +18,7 @@ DEFAULT_MANIFEST = File.join(REPOSITORY_ROOT, "generated", "hare", "jsc-extracti
 
 SOURCE_PATHS = [
   "Source/JavaScriptCore/bytecode/BytecodeList.rb",
+  "Source/JavaScriptCore/bytecode/BytecodeUseDef.cpp",
   "Source/JavaScriptCore/generator/Argument.rb",
   "Source/JavaScriptCore/generator/DSL.rb",
   "Source/JavaScriptCore/generator/Metadata.rb",
@@ -70,7 +71,6 @@ CACHE_ONLY_OPERAND_NAMES = %w[
   profileIndex
   recommendedIndexingType
   resultType
-  stackOffset
   topProfile
   valueProfile
 ].freeze
@@ -443,6 +443,50 @@ def cache_operand?(name)
   CACHE_ONLY_OPERAND_NAMES.include?(name) || name.end_with?("ValueProfile") || name.end_with?("Profile")
 end
 
+def parse_value_flow(path, generated_type_to_opcode)
+  flow = Hash.new { |hash, key| hash[key] = { "uses_at" => [], "defines_at" => [], "source_lines" => [] } }
+  File.foreach(path).with_index(1) do |line, line_number|
+    match = line.match(/^\s*(USES|DEFS)\((Op[A-Za-z0-9_]+),\s*([^)]*)\)/)
+    next unless match
+    opcode = generated_type_to_opcode[match[2]]
+    fail!("BytecodeUseDef.cpp names unknown generated type #{match[2]}") unless opcode
+    key = match[1] == "USES" ? "uses_at" : "defines_at"
+    match[3].split(",").map(&:strip).reject(&:empty?).each do |operand|
+      entry = flow[[opcode, operand]]
+      entry[key] << "entry"
+      entry["source_lines"] << line_number
+    end
+  end
+  flow
+end
+
+def add_value_flow(flow, opcode, operand, kind, point, source_line)
+  entry = flow[[opcode, operand]]
+  entry.fetch(kind) << point
+  entry.fetch("source_lines") << source_line
+end
+
+def scalar_operand_role(name, type)
+  return "control_target" if type == "BoundLabel"
+  return "argument_count" if name == "argc"
+  return "argument_range_base" if name == "argv"
+  return "frame_slot_base" if name == "stackOffset"
+  return "argument_index" if %w[firstVarArg numParametersToSkip].include?(name)
+  return "switch_table_index" if name == "tableIndex"
+  return "function_table_index" if name == "functionDecl"
+  return "bit_vector_index" if name == "bitVector"
+  return "identifier_index" if %w[property var message].include?(name) && type == "unsigned"
+  return "resume_point" if name == "yieldPoint"
+  return "element_or_field_index" if name == "index"
+  return "count" if name.match?(/count|argc/i)
+  return "mode_or_flags" if type.match?(/Mode|Flags|Kind|Type|Info/)
+  return "table_or_slot_index" if type == "unsigned"
+  return "signed_offset_or_count" if type == "int"
+  return "boolean_control" if type == "bool"
+
+  "typed_scalar"
+end
+
 def opcode_owner(name)
   return ["H017", "module_eval"] if %w[op_call_direct_eval op_resolve_scope_for_hoisting_func_decl_in_eval].include?(name)
   return ["H016", "exception_abrupt"] if name.match?(/\Aop_(catch|throw|throw_static_error|check_traps|unreachable)\z/)
@@ -623,6 +667,57 @@ fail!("BytecodeList.rb left an open section") unless DSL.instance_variable_get(:
 sections = DSL.instance_variable_get(:@sections)
 fail!("unexpected section set #{sections.map(&:name).inspect}") unless sections.map(&:name) == %i[Bytecode CLoopHelpers NativeHelpers CLoopReturnHelpers]
 
+bytecode_section = sections.find { |section| section.name == :Bytecode }
+generated_type_to_opcode = bytecode_section.opcodes.to_h { |opcode| [opcode.capitalized_name, opcode.name.to_s] }
+use_def_relative = "Source/JavaScriptCore/bytecode/BytecodeUseDef.cpp"
+use_def_path = File.join(webkit_root, use_def_relative)
+value_flow = parse_value_flow(use_def_path, generated_type_to_opcode)
+
+varargs_line = line_for(use_def_path, "case op_call_varargs")
+%w[op_call_varargs op_tail_call_varargs op_construct_varargs op_super_construct_varargs].each do |opcode|
+  %w[callee thisValue arguments].each { |operand| add_value_flow(value_flow, opcode, operand, "uses_at", "all_checkpoints", varargs_line) }
+  add_value_flow(value_flow, opcode, "dst", "defines_at", "makeCall", varargs_line)
+end
+
+iterator_open_line = line_for(use_def_path, "case op_iterator_open")
+%w[op_iterator_open op_async_iterator_open].each do |opcode|
+  %w[symbolIterator iterable].each { |operand| add_value_flow(value_flow, opcode, operand, "uses_at", "symbolCall_and_later", iterator_open_line) }
+  add_value_flow(value_flow, opcode, "iterator", "uses_at", "getNext_and_later", iterator_open_line)
+  add_value_flow(value_flow, opcode, "iterator", "defines_at", "symbolCall", iterator_open_line)
+  add_value_flow(value_flow, opcode, "next", "defines_at", "getNext", iterator_open_line)
+end
+
+iterator_next_line = line_for(use_def_path, "case op_iterator_next")
+%w[iterator next].each { |operand| add_value_flow(value_flow, "op_iterator_next", operand, "uses_at", "all_checkpoints", iterator_next_line) }
+add_value_flow(value_flow, "op_iterator_next", "iterable", "uses_at", "computeNext_and_later", iterator_next_line)
+add_value_flow(value_flow, "op_iterator_next", "done", "defines_at", "getDone", iterator_next_line)
+add_value_flow(value_flow, "op_iterator_next", "value", "defines_at", "getDone", iterator_next_line)
+add_value_flow(value_flow, "op_iterator_next", "value", "defines_at", "getValue", iterator_next_line)
+
+async_next_line = line_for(use_def_path, "case op_async_iterator_next")
+%w[next iterator driver].each { |operand| add_value_flow(value_flow, "op_async_iterator_next", operand, "uses_at", "entry", async_next_line) }
+
+call_like_line = line_for(use_def_path, "auto handleOpCallLike")
+%w[op_call op_tail_call op_construct op_super_construct op_call_ignore_result op_call_direct_eval].each do |opcode|
+  add_value_flow(value_flow, opcode, "callee", "uses_at", "entry", call_like_line)
+end
+%w[thisValue scope].each { |operand| add_value_flow(value_flow, "op_call_direct_eval", operand, "uses_at", "entry", call_like_line) }
+
+array_range_line = line_for(use_def_path, "auto handleNewArrayLike")
+%w[op_new_array op_new_array_with_spread].each do |opcode|
+  add_value_flow(value_flow, opcode, "argv", "uses_at", "register_range", array_range_line)
+end
+strcat_line = line_for(use_def_path, "case op_strcat")
+add_value_flow(value_flow, "op_strcat", "src", "uses_at", "register_range", strcat_line)
+
+instanceof_line = line_for(use_def_path, "case op_instanceof")
+add_value_flow(value_flow, "op_instanceof", "constructor", "uses_at", "getHasInstance", instanceof_line)
+%w[value constructor hasInstanceOrPrototype].each { |operand| add_value_flow(value_flow, "op_instanceof", operand, "uses_at", "getPrototype", instanceof_line) }
+%w[value hasInstanceOrPrototype].each { |operand| add_value_flow(value_flow, "op_instanceof", operand, "uses_at", "instanceof", instanceof_line) }
+add_value_flow(value_flow, "op_instanceof", "hasInstanceOrPrototype", "defines_at", "getHasInstance", instanceof_line)
+add_value_flow(value_flow, "op_instanceof", "hasInstanceOrPrototype", "defines_at", "getPrototype", instanceof_line)
+add_value_flow(value_flow, "op_instanceof", "dst", "defines_at", "instanceof", instanceof_line)
+
 records = []
 opcode_rows = []
 
@@ -722,6 +817,22 @@ sections.each do |section|
       optional = argument.instance_variable_get(:@optional)
       operand_cache = cache_only || cache_operand?(argument_name)
       representation, width_rule = argument_width(type)
+      flow = value_flow[[name, argument_name]]
+      uses_at = flow.fetch("uses_at").uniq
+      defines_at = flow.fetch("defines_at").uniq
+      operand_role = if operand_cache
+        "cache_hint_or_layout"
+      elsif type == "VirtualRegister" && uses_at.any? && defines_at.any?
+        uses_at.include?("register_range") ? "register_range_use_def" : "value_use_def"
+      elsif type == "VirtualRegister" && uses_at.any?
+        uses_at.include?("register_range") ? "register_range_use" : "value_use"
+      elsif type == "VirtualRegister" && defines_at.any?
+        "value_def"
+      elsif type == "VirtualRegister"
+        "encoded_constant_or_register_reference"
+      else
+        scalar_operand_role(argument_name, type)
+      end
       if operand_cache
         cache_operands += 1
         argument_config = cache_config(
@@ -757,13 +868,19 @@ sections.each do |section|
         ),
         config: argument_config,
         width_source: width_rule,
-        field_role: "operand",
+        field_role: operand_role,
         extras: {
           "section" => section.name.to_s,
           "opcode" => name,
           "operand_index" => argument.index,
           "optional_in_dsl" => optional,
           "owner_task" => owner_task,
+          "value_flow" => {
+            "uses_at" => uses_at,
+            "defines_at" => defines_at,
+            "source" => use_def_relative,
+            "source_lines" => flow.fetch("source_lines").uniq.sort,
+          },
         },
       )
     end
@@ -905,6 +1022,87 @@ sections.each do |section|
       "temporaries" => tmps.keys.join(","),
       "lowering_status" => cache_only ? "excluded" : "inventoried",
     }
+  end
+end
+
+derived_operands = [
+  [
+    "call_argument_range",
+    %w[op_call op_tail_call op_construct op_super_construct op_call_ignore_result op_call_direct_eval],
+    call_like_line,
+    "CallFrame argument registers derived from m_argv and m_argc",
+    "the call-like instruction is present",
+    "HareJscVisitor::expand_call_argument_range",
+    "visitor.instruction.derived_uses.call_arguments",
+    "derived registers equal [-m_argv + thisArgumentOffset, +m_argc) and are in frame range",
+  ],
+  [
+    "array_argument_range",
+    %w[op_new_array op_new_array_with_spread],
+    array_range_line,
+    "descending register range derived from m_argv.offset() and m_argc",
+    "the array-like instruction is present",
+    "HareJscVisitor::expand_array_argument_range",
+    "visitor.instruction.derived_uses.array_elements",
+    "derived registers equal m_argv.offset() down through argc elements and are in frame range",
+  ],
+  [
+    "strcat_source_range",
+    %w[op_strcat],
+    strcat_line,
+    "descending register range derived from m_src.offset() and m_count",
+    "op_strcat is present",
+    "HareJscVisitor::expand_strcat_source_range",
+    "visitor.instruction.derived_uses.string_parts",
+    "derived registers equal m_src.offset() down through count values and are in frame range",
+  ],
+  [
+    "async_iterator_resume_value",
+    %w[op_async_iterator_next],
+    async_next_line,
+    "call argument index 1 derived by resumeValueOperandFor from m_stackOffset",
+    "m_hasValue is true",
+    "resumeValueOperandFor(OpAsyncIteratorNext)",
+    "visitor.instruction.derived_uses.resume_value",
+    "derived resume register is in frame range and absent exactly when m_hasValue is false",
+  ],
+  [
+    "enter_local_definitions",
+    %w[op_enter],
+    line_for(use_def_path, "case op_enter"),
+    "all virtualRegisterForLocal(i) for 0 <= i < numVars",
+    "op_enter is present",
+    "computeDefsForBytecodeIndexImpl(numVars, op_enter)",
+    "visitor.instruction.derived_defs.locals",
+    "the definition set contains every callee local exactly once",
+  ],
+]
+derived_operands.each do |name, opcodes, source_line, representation, condition, extraction, destination, validation|
+  opcodes.each do |opcode|
+    add_synthetic_record(
+      records,
+      id: "derived_operand.#{opcode}.#{name}",
+      kind: "derived_operand",
+      source_path: use_def_relative,
+      source_line: source_line,
+      symbol: "#{opcode}.#{name}",
+      type: "derived VirtualRegister set",
+      config: semantic_config(
+        role: "execution",
+        representation: representation,
+        encoding: "not stored as an independent BytecodeList operand",
+        presence: condition == "m_hasValue is true" ? "conditional" : "required",
+        condition: condition,
+        ownership: "copied_scalar",
+        extraction: extraction,
+        destination: destination,
+        validation: validation,
+      ),
+      width_source: "BytecodeUseDef.cpp derived-use/definition rule",
+      field_role: name.end_with?("definitions") ? "value_def" : "value_use",
+      generated_definition: "not_generated:pinned_derived_operand_rule",
+      extras: { "opcode" => opcode },
+    )
   end
 end
 
@@ -1429,6 +1627,9 @@ records.each do |entry|
     fail!("cache-only row #{entry.fetch('id')} is consumed semantically") if entry["destination"] || entry["extraction"]
     fail!("cache-only row #{entry.fetch('id')} has no reason") if entry["exclusion_reason"].nil? || entry["exclusion_reason"].empty?
   end
+  if entry.fetch("kind") == "operand" && entry.fetch("classification") == "semantic"
+    fail!("semantic operand #{entry.fetch('id')} has no field role") if %w[operand cache_hint_or_layout].include?(entry.fetch("field_role"))
+  end
 end
 
 duplicate_ids = records.group_by { |entry| entry.fetch("id") }.select { |_id, entries| entries.length > 1 }.keys
@@ -1444,6 +1645,7 @@ counts = {
   "metadata_references" => records.count { |entry| entry.fetch("kind") == "metadata_reference" },
   "opcode_checkpoints" => records.count { |entry| entry.fetch("kind") == "opcode_checkpoint" },
   "opcode_temporaries" => records.count { |entry| entry.fetch("kind") == "opcode_temporary" },
+  "derived_operands" => records.count { |entry| entry.fetch("kind") == "derived_operand" },
   "semantic_records" => records.count { |entry| entry.fetch("classification") == "semantic" },
   "cache_only_records" => records.count { |entry| entry.fetch("classification") == "cache_only" },
   "total_records" => records.length,
@@ -1459,6 +1661,7 @@ expected_counts = {
   "metadata_references" => 50,
   "opcode_checkpoints" => 18,
   "opcode_temporaries" => 5,
+  "derived_operands" => 11,
 }
 expected_counts.each do |key, expected|
   fail!("#{key} drift: expected #{expected}, got #{counts.fetch(key)}") unless counts.fetch(key) == expected
@@ -1473,6 +1676,7 @@ manifest = {
   "generator" => "scripts/hare/generate-jsc-inventory.rb",
   "definitions" => {
     "opcode_dsl" => bytecode_relative,
+    "value_flow_rules" => use_def_relative,
     "generated_structs" => "Source/JavaScriptCore/bytecode/BytecodeStructs.h",
     "generated_ids" => "Source/JavaScriptCore/bytecode/Bytecodes.h",
     "width_rules" => [width_path, fits_path, instruction_path],
