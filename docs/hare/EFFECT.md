@@ -54,8 +54,12 @@ shared IR or ABI design:
 
 H005 does not authorize H020 to invent a supported subset. If a reachable
 defined behavior cannot be lowered, the build must fail at compile time. The
-only escalation condition identified by this inventory is the unresolved pin;
-the inspected implementation did not require JSC execution or a whitelist.
+unresolved canonical pin/provenance audit is the current known checkpoint
+blocker. H005/H020 must also escalate any selected-source disagreement or any
+decision that cannot represent the shared ABI, re-entry, exception-containment,
+ownership/lifetime, cross-realm/thread, scheduler/interruption, or no-fallback
+semantics in the Hare contracts. No current evidence requires JSC execution or
+a whitelist; either would be an escalation rather than a Tier 1 exception.
 
 ## 2. Version candidates and provenance
 
