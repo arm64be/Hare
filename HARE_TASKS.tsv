@@ -1,5 +1,5 @@
 id	lane	wave	status	depends_on	owned_paths	mission	checkpoint	escalate_if
-H000	brain	W0	done	-	CLAUDE.md,HARE.md,HARE_WORKSTREAMS.md,HARE_TASKS.tsv	Define the closed-world Hare mission and labour model	Documentation consistency check	Product semantics change
+H000	brain	W0	done	-	CLAUDE.md,HARE.md,HARE_ORCHESTRATOR_HANDOFF.md,HARE_WORKSTREAMS.md,HARE_TASKS.tsv	Define the closed-world Hare mission and labour model	Documentation consistency check	Product semantics change
 H001	slave	W0	ready	H000	scripts/hare/,tmp/hare-baseline/	Capture toolchains, upstream debug behavior, incremental rebuild resources, and disk use	One upstream debug build plus one warm incremental edit; no release build	The workstation cannot sustain the debug build
 H002	brain	W0	ready	H000	docs/hare/SEMANTICS.md	Specify defined behavior, compile errors, UB, static eval, static imports, and runtime-code-generation rejection	Reviewed examples cover each semantic category	Pinned specifications conflict
 H003	brain	W0	ready	H000	docs/hare/COMPILER.md	Specify the direct UnlinkedCodeBlock hook, Hare IR, runtime ABI, and build-time-only JSC boundary	Mission packet is sufficient for independent hook, IR, and backend workers	The hook requires mutable JSC execution state

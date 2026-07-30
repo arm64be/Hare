@@ -1,5 +1,7 @@
 This is the Hare fork of Bun. Read `HARE.md`, `HARE_WORKSTREAMS.md`, and the
 claimed mission in `HARE_TASKS.tsv` before changing Hare code.
+An orchestration thread taking over the project must also read
+`HARE_ORCHESTRATOR_HANDOFF.md` before creating worker threads.
 
 ## Hare Fork Overrides
 
