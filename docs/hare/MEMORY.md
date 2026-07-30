@@ -68,6 +68,13 @@ root keeps the object that owns the address alive. Therefore:
    generic native path. If no such path preserves the defined operation, fail
    compilation before emitting a raw use.
 
+Strong, DeferGC, a stack map, and an ordinary root are reachability or
+collection-lifetime mechanisms, not stable-address pins. H004 does not assume
+that any of them prevents a moving collector from changing an object's
+address. A raw or interior pointer across a safepoint therefore requires a
+separately verified stable carrier; otherwise the pointer is prohibited and
+native code reloads from the root.
+
 ## 2. Evidence lattice and trust boundary
 
 Every inferred fact carries exactly one evidence class. Merges are
@@ -126,6 +133,14 @@ These operations are inferred for ordinary JS/TS where possible. Explicit
 contracts can state stronger unique, shared, mutable, or move obligations, but
 the syntax and ABI for doing so are outside this document.
 
+An ordinary JavaScript callback argument is a managed alias, not an implicit
+raw or scoped borrow. The callback may retain it, return it, put it in a
+closure, or publish it to a queue; Hare roots the alias and promotes its owner
+when that escape is observable. A compile-error borrow escape applies only to
+an explicit raw/scoped borrow contract whose precondition bounds the borrow.
+Replacing an ordinary managed alias with a copy is a semantic change unless
+the program proves the copy unobservable.
+
 ### Projection and disjointness
 
 A projected borrow or pin names its parent owner. An immutable projection is
@@ -174,6 +189,11 @@ region only by an explicit move into a carrier whose lifetime dominates the
 escape, by a defined copy, or by promotion. A region crossing suspension must
 be continuation-owned or promoted; a stack-only region is not enough.
 
+The S09 inventory row is deliberately narrower: it covers only a
+non-suspending lexical region with no worker handoff, FFI retention, or
+re-entrant callback. Async, generator, Effect, FFI, and worker regions use
+their boundary rows, which enumerate their additional exits.
+
 ### GC handles and managed roots
 
 A GC handle or stack map keeps a managed value reachable across allocation,
@@ -183,6 +203,11 @@ without a root carrier. A handle may be copied as a reference, but it does not
 provide stable address identity unless the collector contract explicitly says
 so. When a handle does not pin, reload the object or field after a possible
 move.
+
+H004 does not name Strong, DeferGC, or an ordinary GC handle as a pin. If the
+collector later provides a separately verified stable-address carrier, that
+carrier may satisfy a pin; until then, a moving managed object is accessed
+through its root and is reloaded after every possible movement.
 
 Weak handles and WeakRef are intentionally not strong roots. A weak target may
 disappear between observation and use; a finalizer is not an owner or a borrow
@@ -199,12 +224,27 @@ it is reachable and a pin only when an address-sensitive use requires one.
 
 ### Transfer tokens
 
-A transfer token records a one-way ownership handoff. The sender loses the
-transferred owner at the commit point, the receiver becomes the sole owner, and
-the token/queue roots the value while delivery is pending. A failed enqueue
-does not consume the source. A detached ArrayBuffer and a structured-clone
-message are distinct operations: transfer preserves the backing storage with
-one new owner, while clone creates a separate value.
+A transfer token records a one-way ownership handoff and its state machine is
+observable for ArrayBuffer transfer:
+
+1. **Validate** the transfer list, identity, detachability, and structured
+   clone inputs. Validation failure leaves the sender unchanged.
+2. **Detach and commit ownership**. The sender's ArrayBuffer is detached and
+   the transfer token becomes the owner of the backing store. This commit can
+   occur before the worker queue accepts the message.
+3. **Enqueue** the committed token and cloned message state. The queue roots
+   pending delivery, but enqueue can fail during worker shutdown.
+4. **Deliver or drop**. Delivery transfers ownership to the receiver. A
+   dropped committed token releases the backing store without restoring the
+   sender; the sender may already observe a detached buffer even when no
+   message is delivered. This matches the pinned Bun behavior for
+   post-detachment enqueue or delivery failure.
+
+A structured-clone message has a distinct source owner and clone owner; clone
+does not alias the source. A failed validation is not a transfer, while a
+post-commit enqueue or delivery failure is a drop of an already-detached
+transfer. Every state transition and release is explicit; no implementation
+may silently roll back detachment.
 
 ### Reference counting
 
@@ -240,14 +280,28 @@ state and re-establish roots and pins. Never hold a non-reentrant mutable
 borrow while invoking user code merely because the first call site is
 syntactically synchronous.
 
+Async, Effect, and FFI registrations use an atomic one-shot state machine.
+The registration starts pending and has one successful terminal transition:
+completed, cancelled, or closed. A callback first claims the registration
+before touching payload or continuation state; cancellation/close wins the
+same race by atomically closing it. A losing late callback is a defined no-op
+that releases only its callback token and never dereferences released state.
+The winning path owns cleanup and settles the operation exactly once. A late
+callback is therefore not automatically invalid input; missing atomic
+arbitration or a callback that uses state after losing the claim is a compile
+error.
+
 ### Async and generators
 
 An async local that is live over await belongs to the continuation frame or a
 promoted owner. A borrowed input cannot cross await as a stack address. Hare
 must retain the rooted owner, copy the needed value, or reject the borrow. A
 generator frame owns state across every next, throw, return, and iterator
-close; a yielded view is copied or carries an explicit owner/root/pin that
-outlives the caller's use.
+close. A yielded JavaScript view retains its original view object and
+backing-store identity, byte offset, length, mutation visibility, and detach
+behavior. The generator/continuation roots that view and its backing store;
+it is not replaced by a copy. Copying is allowed only for an explicit clone or
+for bytes proven to be an unobservable internal representation.
 
 ### Effect
 
@@ -255,10 +309,14 @@ The contract covers the complete reachable Effect implementation, not a
 whitelist of combinators. A scope owns acquired resources, finalizers, child
 state, and continuation state across success, typed failure, defect,
 interruption, cancellation, and nested scope unwinding. Forking a unique value
-is a move into the child fiber; parallel immutable reads may share a rooted
-owner; parallel mutation requires a defined synchronization/ownership carrier.
-An interruption finalizer keeps its resource and cause rooted until cleanup
-completes.
+is a move into the child fiber only when whole-program inference or an explicit
+verified unique/move contract proves that ownership. Ordinary JavaScript
+objects captured by parent and child fibers remain shared managed aliases with
+their identity and mutation visibility preserved. Parallel immutable reads may
+share a rooted owner; parallel mutation requires a defined
+synchronization/ownership carrier. An interruption finalizer keeps its
+resource and cause rooted until cleanup completes, and late callbacks use the
+one-shot registration state machine rather than released fiber state.
 
 ### FFI
 
@@ -279,6 +337,17 @@ commit and may not use the backing store. SharedArrayBuffer is shared mutable
 storage and requires its defined atomic/locking semantics; it is not a license
 for unsynchronized native aliases. A cross-thread native owner uses reference
 counting only when its independent termination order requires it.
+
+Each worker has an explicit VM/global context owner, message queue owner, port
+registrations, and termination token. A nested worker has its own context and
+queue; parent termination does not implicitly free or terminate that child
+unless the pinned worker contract says so. Termination closes the context and
+atomically closes its queue and callback registrations, releases queued clone
+and transfer owners, and lets the worker finish its OS-thread teardown. A
+message or callback arriving after closure loses the one-shot claim and is
+dropped without dereferencing the closed parent or child context. A delivered
+message transfers ownership to the live receiver context; a post-detachment
+drop releases the committed transfer without restoring the sender.
 
 ## 6. All-exit rule
 
@@ -332,23 +401,24 @@ owner merely because the annotation says value: number.
 
 ~~~text
 withBytes(bytes, callback) {
-  // inferred shared borrow, valid only through callback return
+  // ordinary managed callback argument; retaining it is observable and valid
   return callback(bytes);
 }
 
-withMutableBytes(buffer, callback) {
-  // explicit contract: exclusive mutable borrow, no callback re-entry
-  return callback(&mut buffer);
+withRawBorrow(buffer, callback) {
+  // explicit contract: scoped raw borrow, no escape or callback re-entry
+  return callback(raw_borrow buffer);
 }
 
 sendToWorker(move buffer); // transfer token moves the unique owner
 clone = copy value;        // source remains owned; clone has a new owner
 ~~~
 
-If callback stores the borrow, re-enters an alias, or suspends, the direct
-borrow is invalid. Hare copies/promotes the value when that preserves defined
-behavior, or emits a compile error when the requested explicit borrow has no
-legal carrier.
+An ordinary callback may store bytes or an object, return it, or capture it;
+Hare roots the managed alias and promotes it when the callback outlives the
+caller. Only the explicit raw/scoped contract makes escape a compile error.
+Mutable borrows still require exclusivity and end before re-entry unless their
+verified contract supplies a safe synchronized carrier.
 
 ### Projection and disjointness
 
@@ -388,8 +458,10 @@ function* chunks(input: Uint8Array) {
 
 The generator object owns and roots its continuation state through next, throw,
 return, and close. Because a consumer may retain a yielded view after the next
-call, Hare must copy it or expose an owner/root/pin whose scope covers that
-consumer-visible lifetime.
+call, Hare retains the exact original view and backing store through a rooted
+continuation/heap carrier. It preserves view identity, offset, mutation, and
+detach behavior; it may copy only for explicit clone semantics or unobservable
+internal bytes.
 
 ### Effect scope and forked ownership
 
@@ -402,9 +474,10 @@ Effect.scoped(
 
 The scope owns resource, its finalizer, and its continuation. Success, typed
 failure, defect, interruption, cancellation, and nested unwinding all run the
-finalizer. If a unique resource is forked to a child fiber, ownership moves to
-the child; the parent cannot use it while the child owns it. Shared immutable
-state may instead use one rooted owner through the join scope.
+finalizer. A unique resource moves to a child fiber only under a proven or
+explicit unique/move contract; ordinary captured JS objects remain shared
+managed aliases in parent and child. Shared immutable state may use one rooted
+owner through the join scope.
 
 ### FFI borrowed and retained buffers
 
@@ -423,13 +496,13 @@ an FFI lifetime contract.
 
 ~~~text
 root object across nativeAllocate(object); // required strong root
-pin object while nativeUsesAddress(object); // additionally required for address
+reload object after nativeAllocate(object); // root is not a stable-address pin
 ~~~
 
-The root prevents collection; the pin prevents movement or invalidation during
-the address use. A handle that only roots must be dereferenced again after
-nativeAllocate. An interior pointer is invalid unless its parent root and pin
-cover the whole use.
+The root prevents collection; it does not prevent movement or provide a stable
+address. Strong, DeferGC, and ordinary root state are not pins. A raw or
+interior pointer is prohibited across a safepoint unless a separately verified
+stable carrier owns the address; otherwise dereference the root and reload.
 
 ### Weak reference
 
@@ -443,6 +516,22 @@ The weak reference does not own or pin target. The result of deref is a new,
 ordinary managed reference whose root and pin facts are analyzed for use; a
 finalizer cannot be used to justify a borrow or release a separate owner.
 
+### Managed primitives across safepoints
+
+~~~text
+const text = stringValue;
+const symbol = symbolValue;
+const big = bigintValue;
+nativeAllocate(text); // all three remain managed roots while live
+awaitLater(big);
+~~~
+
+Only non-GC immediate primitives such as null, undefined, booleans, and
+numbers whose representation is proven immediate may use the S01 scalar
+carrier. Strings, Symbols, BigInts, boxed primitives, and any other managed
+value remain rooted in the activation or continuation and are reloaded after
+possible movement.
+
 ### Structured clone and transfer
 
 ~~~ts
@@ -452,7 +541,9 @@ port.postMessage(buffer, [buffer]);         // transfer: receiver becomes owner
 
 The queue roots a pending clone/transfer. Clone allocates a distinct value;
 transfer commits an exclusive owner handoff and detaches the sender's buffer.
-If enqueue fails, the transfer token does not consume the source.
+Validation failure leaves the source attached. If enqueue or delivery fails
+after commit, the sender remains detached and the committed token is dropped;
+this is distinct from a validation failure.
 
 ### Cross-thread native state
 
@@ -466,6 +557,19 @@ a JS-heap pointer. The second requires synchronization and a release protocol
 for either thread terminating first. Only this genuinely independently-lived
 case justifies a reference count; a joining worker or lexical scope should use
 that owner instead.
+
+### Async and Effect callback cancellation race
+
+~~~text
+registration = atomicOneShot(pending, payload);
+cancel(registration);     // one winner closes and releases payload
+callback(registration);   // losing late callback observes closed and returns
+~~~
+
+The callback and cancellation paths compete for one atomic claim. A late
+callback is defined and harmless when it loses; it must not read the released
+payload, continuation, or fiber. Effect observers, requests, timers, and async
+promise registrations use the same state machine.
 
 ## 8. Unknown and compile-error boundary
 
@@ -502,6 +606,14 @@ and no generic carrier resolves it:
   and synchronization protocol;
 - worker termination, finalization, or finally can bypass the only release;
 - a required projection's parent stability or disjointness is unknown.
+- a callback registration has no atomic one-shot winner, or a losing late
+  callback can dereference released state;
+- an ordinary managed callback argument has no root/promotion carrier for its
+  defined escape;
+- ArrayBuffer transfer has no separate validation, detach/commit, enqueue, and
+  delivery/drop transitions;
+- a worker or nested-worker queue/context has no owner, close transition, or
+  late-message rule.
 
 These are compile errors even if a TypeScript hint or a profile claims the
 case never occurs. A compile error is preferable to hidden runtime state or a
@@ -554,3 +666,9 @@ generators, Effect success/failure/interruption/cancellation, FFI borrow and
 retention, GC roots and safepoints, weak references, callback re-entry,
 projection/disjointness, structured clone/transfer, and cross-thread sharing,
 with every unknown boundary classified as generic Tier 1 or a compile error.
+The inventory must also assign owners, roots, pins, carriers, and exits to the
+complete reachable Effect runtime domains: FiberRuntime inbox/observers,
+FiberRefs, scopes/finalizers, Deferred/Queue/PubSub, requests, STM journals
+and retry todos, Channel/Stream/Sink executors and buffers, Schedule timers,
+Context/Layers, observability/test services, Micro, and current-fiber ambient
+state.
