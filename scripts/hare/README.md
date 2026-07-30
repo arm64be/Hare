@@ -1,4 +1,28 @@
-# Hare baseline harness
+# Hare tooling
+
+## Effect provenance manifest
+
+`generate-effect-manifest.py` verifies Hare's exact `effect@3.22.0` root pin,
+lock tuple and transitive graph, registry integrity, installed package tree,
+and upstream tag identity. It emits the complete per-file and export-condition
+manifest consumed by H005 and later Effect lowering work.
+
+Fetch both immutable registry artifacts and the selected upstream tag into an
+ignored temporary directory, then run:
+
+```sh
+python3 scripts/hare/generate-effect-manifest.py \
+  --selected-tarball tmp/hare-effect-audit/effect-3.22.0.tgz \
+  --comparison-tarball tmp/hare-effect-audit/effect-3.19.19.tgz \
+  --upstream-root tmp/hare-effect-audit/upstream-3.22.0 \
+  --output generated/hare/effect-3.22.0.manifest.json
+```
+
+The generator refuses a different artifact, installed tree, root pin, lock
+integrity, or upstream commit. The tarballs and checkout remain ignored; the
+verified machine manifest is committed.
+
+## Debug baseline harness
 
 See [H001_BASELINE.md](H001_BASELINE.md) for the committed provenance and
 results record from the pinned baseline run.

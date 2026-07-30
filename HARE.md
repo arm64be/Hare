@@ -106,7 +106,8 @@ Hare's semantic contract is the pinned combination of:
 - ECMAScript
 - Bun's documented APIs and compatibility contracts
 - the applicable Web and Node.js specifications
-- the pinned complete Effect implementation and public contract
+- the complete `effect@3.22.0` implementation and public contract pinned in
+  `docs/hare/EFFECT.md`
 - the Hare memory, pinning, Result, and backtrace specifications
 
 Defined behavior that Hare has not implemented is a compile error. It is not

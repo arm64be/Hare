@@ -1,9 +1,9 @@
 # H005: Effect semantic and lowering contract
 
-Status: draft for brain review. The H005 ledger checkpoint is **not met**:
-the canonical `effect` version, integrity, and source provenance have not been
-chosen and recorded for Hare. This document is the semantic contract and
-source inventory; it does not choose a dependency pin or change package files.
+Status: accepted H005 contract. Hare pins `effect@3.22.0` exactly and records
+the selected registry artifact, upstream source identity, complete package
+manifest, and the reviewed `3.19.19` comparison below. The checkpoint covers
+the complete package contract; it does not promise that H020 lowering exists.
 
 ## 1. Contract boundary
 
@@ -53,77 +53,86 @@ shared IR or ABI design:
 | H027 | Differential and adversarial coverage of the complete selected pin, including scopes, fibers, interruption, concurrency, async, streams, and STM. |
 
 H005 does not authorize H020 to invent a supported subset. If a reachable
-defined behavior cannot be lowered, the build must fail at compile time. The
-unresolved canonical pin/provenance audit is the current known checkpoint
-blocker. H005/H020 must also escalate any selected-source disagreement or any
+defined behavior cannot be lowered, the build must fail at compile time.
+H005/H020 must escalate any selected-source disagreement or any
 decision that cannot represent the shared ABI, re-entry, exception-containment,
 ownership/lifetime, cross-realm/thread, scheduler/interruption, or no-fallback
 semantics in the Hare contracts. No current evidence requires JSC execution or
 a whitelist; either would be an escalation rather than a Tier 1 exception.
 
-## 2. Version candidates and provenance
+## 2. Canonical pin and provenance
 
-Hare currently has no direct Effect dependency in its root `package.json` or
-root `bun.lock`. The only repository-local lock evidence is an indirect test
-fixture:
+Hare selects `effect@3.22.0`. Root `package.json` contains the exact direct
+development dependency `"effect": "3.22.0"`; the dependency is a compiler
+semantic input and source corpus, not a runtime package installed beside a
+Hare executable. Root `bun.lock` records the same exact workspace specifier and
+this package tuple:
 
-| Candidate | Evidence | What it means |
+| Field | Selected value |
+| --- | --- |
+| Registry artifact | `https://registry.npmjs.org/effect/-/effect-3.22.0.tgz` |
+| Registry integrity | `sha512-jhYFe0zTlIRqYFrKTS+6luhmS/Tm0f+JLo0K9KUxvtFab1SUGEszQi2ehOP6QzAZvy831lDmTwwzvVDZSPNz3g==` |
+| Artifact SHA-256 | `cb73fa0743025dac14d625b2e5a2ff2079fbccf1b5e3622f8e899ef4bd90c316` |
+| Unpacked artifact tree SHA-256 | `1d7dda8385f655400f0c31776d42270f935ac86db1a010c52e8445086fc407eb` |
+| Published source tree SHA-256 | `6c14f8bf293b7f0e57f1e3785171385c2a6d2780944e602c17207bf22f67e48b` |
+| Upstream tag | `effect@3.22.0` |
+| Upstream commit | `e670e0f6befb959b84208d5f77631276521020ae` |
+| Machine manifest | `generated/hare/effect-3.22.0.manifest.json` |
+| Reproducer | `scripts/hare/generate-effect-manifest.py` |
+
+The registry artifact is the canonical snapshot because it is the code users
+resolve. Its 186 `src/internal/` runtime files match the upstream tag commit
+byte-for-byte. Upstream public source files are transformed during publishing,
+primarily to materialize API documentation, so their registry bytes—not the
+checkout's pre-publish bytes—define Hare's source hashes. The manifest contains
+all 2,715 published files with size and SHA-256, all 179 export maps and their
+condition targets, and separate complete ESM, CJS, declaration, source,
+generated, and metadata arrays. The three `./.index` condition targets are
+declared but absent from both candidate artifacts; the manifest records them
+with `present: false` instead of inventing files.
+
+`reachableModules` is deliberately empty in this package-level manifest. A
+reachable subset is application-specific and is recorded by the graph compiler
+for each Hare build. An empty application subset does not narrow the complete
+selected-package contract or authorize an Effect feature whitelist.
+
+The lock resolves the selected package's dependency graph as follows:
+
+| Package | Requested by parent | Exact lock result |
 | --- | --- | --- |
-| `effect@3.19.19` | `test/integration/vite-build/the-test-app/bun.lock:727`, integrity `sha512-Yc8U/SVXo2dHnaP7zNBlAo83h/nzSJpi7vph6Hzyl4ulgMBIgPmz3UzOjb9sBgpFE00gC0iETR244sfXDNLHRg==`; reached through an optional dependency | Repository fixture evidence only. It is not a Hare project pin and its fixture lockfile must not define the compiler contract. |
-| `effect@3.22.0` | `/home/nvmbr/Work/doll_eyes/package.json:16` has `"effect": "^3.22.0"`; `/home/nvmbr/Work/doll_eyes/bun.lock:12,40` resolves `3.22.0` with integrity `sha512-jhYFe0zTlIRqYFrKTS+6luhmS/Tm0f+JLo0K9KUxvtFab1SUGEszQi2ehOP6QzAZvy831lDmTwwzvVDZSPNz3g==`; `/home/nvmbr/Work/doll_eyes/node_modules/effect/package.json:2-3` reports `3.22.0` | Complete local source evidence only. It is not Hare's accepted pin. All source claims in §4 are explicitly **3.22.0 evidence** and must be rechecked against the chosen pin. |
+| `@standard-schema/spec` | `^1.0.0` | `1.1.0`, integrity `sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==` |
+| `fast-check` | `^3.23.1` | `3.23.2`, integrity `sha512-h5+1OzzfCC3Ef7VbtKdcv7zsstUQwUDlYpUTvjeUsJAssPgLn7QzbboPtL5ro04Mq0rPOsMzl7q5hIbRs2wD1A==` |
+| `pure-rand` | `^6.1.0` | `6.1.0`, integrity `sha512-bVWawvoZoBYpp6yIoQtQXHZjmz35RSVHnUOTefl8Vcjr8snTPY1wnpSPMWekcFwbxI6gtmT7rSYPFvz71ldiOA==` |
 
-No complete local `3.19.19` source snapshot was found during this inventory.
-The architecture appears to be the same Effect family, but equivalence is not
-proven. In particular, `SchedulerRunner` and any source marked `@since
-3.20.0` in the 3.22 tree are version-sensitive evidence and must not be
-projected onto 3.19.19 without a source diff. The two candidates therefore
-materially disagree at least in available source provenance and potentially in
-reachable behavior; H005 must remain unresolved until the brain review makes a
-choice.
+### 2.1 Candidate source audit
 
-### Required canonical record
+The `3.19.19` and `3.22.0` registry tarballs were compared directly. They
+contain the same 179 export keys, the same dependency ranges, and the same
+2,715 artifact paths. Of 362 published source files, 21 changed and 341 are
+byte-identical; eight of the changed files are under `src/internal/`. The
+comparison artifact is fixed by integrity
+`sha512-Yc8U/SVXo2dHnaP7zNBlAo83h/nzSJpi7vph6Hzyl4ulgMBIgPmz3UzOjb9sBgpFE00gC0iETR244sfXDNLHRg==`
+and SHA-256
+`02b9b83ed550df4e9ad16692fed159c31de4ba1ff7e0338bb57578d18b1b4f64`.
 
-The later pinning change must make the chosen release a direct Hare project
-dependency and record all of the following as one auditable provenance record:
+The runtime-domain review found these selected semantic differences:
 
-1. Root `package.json`: an exact direct dependency, for example
-   `"effect": "3.22.0"` or `"effect": "3.19.19"`; a range such as `^3.22.0`
-   is not sufficient for a semantic contract.
-2. Root `bun.lock`: the matching workspace dependency and package tuple,
-   including the exact resolved version, all transitive dependency ranges as
-   resolved by Bun, and the package integrity digest.
-3. `docs/hare/EFFECT.md`: the selected version, lock integrity, package source
-   origin, source snapshot or tarball SHA-256, and the exact source tree used
-   for the inventory. The provenance entry must say whether the snapshot is
-   the registry package or an upstream repository checkout and include the
-   package commit/archive identifier when one exists.
-4. A machine-readable selected-pin module/export/artifact manifest. It must
-   record the resolved package export-condition map and the exact files selected
-   by each relevant module/export, with separate complete arrays for ESM, CJS,
-   declarations, source, and generated artifacts. Every entry is a path plus a
-   SHA-256; a prose list or one package/tarball hash is insufficient. The
-   manifest must also identify the selected package version, lock integrity,
-   source-tree hash, and artifact hash, and must distinguish the complete
-   published artifact set from the compiler's reachable subset. The record
-   must be consumable as data (for example, an object with `exports`,
-   `esmFiles`, `cjsFiles`, `dtsFiles`, `sourceFiles`, `generatedFiles`, and
-   `reachableModules` arrays), not inferred from a later build.
-5. A verification note: package metadata version equals the lock tuple,
-   lock integrity matches the fetched artifact, the source manifest matches
-   that artifact, and the source diff against the other candidate was reviewed
-   for runtime-domain changes.
+| Domain | `3.22.0` contract relative to `3.19.19` |
+| --- | --- |
+| Scheduler and fiber wakeups | `SchedulerRunner` isolates pending priority buckets per fiber and `scheduleTask` carries the optional fiber through default, sync, controlled, matrix, batched, semaphore, latch, and fiber-runtime submission sites. |
+| Requests and cleanup | `invokeWithInterrupt` uses `ensuring`, so completion of every still-pending request runs on success, failure, or interruption rather than only after the main async effect succeeds. |
+| Tracing | Current-span annotation and tracer logging filter disabled propagation and walk to the selected propagated parent span. |
+| `Cause` rendering | Pretty errors are materialized as populated ordinary `Error` values instead of instances of an internal `PrettyError` subclass. |
+| `RcMap` | Idle TTL may be selected per key and is stored on each entry; release and touch use that entry-specific duration. |
+| `Schedule.cron` | A `+Infinity` clock input terminates with the previous interval instead of attempting another cron calculation. |
+| Public generic code | Cron, Graph, Data, Effect, Layer, schema/type helpers, and related emitted artifacts include additional defined APIs or behavior that Tier 1 compiles generically when reachable. |
 
-Until those fields are populated, the selected version is `unresolved`; this
-draft deliberately does not use the 3.22 integrity or source tree as Hare's
-canonical record.
-
-### Decision matrix for brain review
-
-| Decision | Strength | Cost/risk | Recommendation |
-| --- | --- | --- | --- |
-| Adopt `3.19.19` | Minimizes drift from the existing Hare fixture evidence | Complete source is not locally available; the fixture is indirect and must still be turned into a direct root pin and source snapshot | Choose only if the compatibility/source audit establishes that 3.19.19 is the intended contract. |
-| Adopt `3.22.0` | A direct lock and complete inspectable source tree are available; provenance is currently easiest to audit | It is newer than the fixture and includes version-sensitive additions; it must not silently replace 3.19 semantics | H005 recommendation for the brain to evaluate first, contingent on a 3.19-to-3.22 source/API diff and explicit root pin. |
-| Defer choice | Avoids silently accepting either candidate | Blocks H005's ledger checkpoint and all implementation claims tied to a version | Current status only; not a completion state. |
+The async instruction and registration machinery in `src/internal/core.ts`,
+runtime flags, STM, Channel/Stream/Sink executors, Config internals, and the
+distinct `Micro` engine are byte-identical across the candidates. The selected
+changes strengthen cleanup and scheduler isolation and match the complete
+source used to derive this document. Hare therefore adopts `3.22.0` rather
+than treating the older indirect fixture tuple as its semantic pin.
 
 ## 3. Semantic model and generic lowering rules
 
@@ -133,10 +142,10 @@ instruction fields (`effect_instruction_i0`, `i1`, and `i2`). The internal
 primitive union includes `Async`, `Commit`, `Failure`, success/failure
 continuations, `Success`, `Sync`, runtime-flag updates, `While`, iterator,
 `WithRuntime`, `Yield`, blocked requests, and other tagged values
-(`/home/nvmbr/Work/doll_eyes/node_modules/effect/src/internal/core.ts:83-380`).
+(`node_modules/effect/src/internal/core.ts:83-380`).
 `Commit` invokes a method that returns another Effect, and `Effectable.Class`
 permits custom commit-based values
-(`/home/nvmbr/Work/doll_eyes/node_modules/effect/src/Effectable.ts:95-106`).
+(`node_modules/effect/src/Effectable.ts:95-106`).
 
 This representation imposes no closed list of constructors. Tier 1 must lower
 generic property access, brand/tag checks, closures, iterators, custom
@@ -150,8 +159,7 @@ support.
 boundaries, not data-only records. In the inspected 3.22.0 source,
 `fiberRuntime.ts:1352-1353` dispatches `OP_COMMIT` as
 `internalCall(() => op.commit())`, and `Effectable.ts:95-106` defines the
-custom `commit(): Effect` contract. This is **3.22.0 evidence**, not a promise
-about the unresolved pin.
+custom `commit(): Effect` contract. These are selected-pin source obligations.
 
 The lowering of this boundary must:
 
@@ -168,8 +176,8 @@ The lowering of this boundary must:
   `commit()` is invoked inside the `runLoop` `try`, so an ordinary throw is
   caught by the run-loop conversion to a `Die`; the special
   `InterruptedException` path retains its sequential defect/interruption
-  topology. This is source evidence to be rechecked after pin selection, not a
-  blanket rule for every callback;
+  topology. This selected call site does not create a blanket rule for every
+  callback;
 - allow the returned Effect to be any reachable instruction, including a
   synchronous result, nested user re-entry, async registration, yield,
   interruption, or cancellation. The `commit()` call itself is not assumed to
@@ -201,8 +209,7 @@ The 3.22.0 source exposes an observable ambient current-fiber property:
 `currentFiberURI`. `internal/fiberRuntime.ts:666-680` saves the previous value,
 publishes the running fiber while draining its queue, and restores it in a
 `finally`; `:998-1007` does the same for `start`; and `:1040-1042` republishes
-the fiber from `patchRuntimeFlags`. These locations are **3.22.0 evidence** and
-must be source-audited against the eventual pin.
+the fiber from `patchRuntimeFlags`. These locations are selected-pin evidence.
 
 H005 consumes H003's explicit ambient-state and call/re-entry protocol. It does
 not authorize a hidden native TLS/global current-fiber cell and does not define
@@ -248,11 +255,12 @@ The required observable behavior is:
 
 ### 3.3 Callback exception containment and ordering
 
-The following table is the required 3.22.0 source map. “Escapes” means the
+The following table is the required selected-pin source map. “Escapes” means the
 selected source does not convert the throw at that call site; it may therefore
 escape the current run entry or be handled by an outer, separately documented
 boundary. The table is evidence, not permission to normalize all callbacks to
-defects. H020/H016 must re-audit every row after the canonical pin is chosen.
+defects. H020/H016 must preserve every row during lowering and re-audit it for
+any future pin change.
 
 | Callback or hook | Source order and containment evidence | Required lowering behavior | Owner |
 | --- | --- | --- | --- |
@@ -275,7 +283,7 @@ and defect behavior even if ordinary Effect success cases are unchanged.
 
 `unsafeAsync` and its variants register a callback, retain a cancellation
 effect, optionally create an `AbortController`, and carry a `blockingOn` FiberId
-(`/home/nvmbr/Work/doll_eyes/node_modules/effect/src/internal/core.ts:488-545`).
+(`node_modules/effect/src/internal/core.ts:488-545`).
 `initiateAsync` guards resumption with a one-shot flag, queues the resume on the
 fiber, stores an interruptor when interruptible, and turns registration
 exceptions into defects (`internal/fiberRuntime.ts:1045-1071`). The native
@@ -286,10 +294,10 @@ owns host exception conversion.
 
 ## 4. Complete reachable runtime inventory
 
-All source paths in this section are **3.22.0 evidence from the local
-`/home/nvmbr/Work/doll_eyes/node_modules/effect/src` tree, not an accepted Hare
-pin**. The source map is organized by execution domain, not by a whitelist of
-public API names.
+All source paths in this section refer to the canonical `effect@3.22.0`
+registry source installed at `node_modules/effect/src` and hashed by the
+machine manifest in §2. The source map is organized by execution domain, not by
+a whitelist of public API names.
 
 ### 4.1 Causes, exits, typed failure, defects, and interruption
 
@@ -417,9 +425,12 @@ public API names.
   the fiber reaches Async; the callback may complete synchronously or before
   registration returns; it may be called more than once by a hostile host but
   only the first resume wins; cancellation must reach the registered canceler;
-  abort and interruption must not resume a completed fiber twice; and a
-  callback throw becomes a defect. Native code must expose the same boundary
-  without retaining JSC execution state.
+  and abort and interruption must not resume a completed fiber twice. A
+  synchronous throw from `asyncRegister` at `initiateAsync` becomes a one-shot
+  defect resume. A later callback, `tell`, canceler, or host-adapter throw keeps
+  the exact catch-or-escape behavior of its selected call site in §3.3; it is
+  not normalized into a defect. Native code must expose those distinct
+  boundaries without retaining JSC execution state.
 - **Owner:** H018 owns host callback/promise/AbortSignal bridges; H015 owns
   closure and callback frames; H016 owns thrown-host-error mapping; H019 owns
   cross-boundary roots and cancellation lifetime; H020 owns Async semantics.
@@ -449,8 +460,7 @@ public API names.
   strategies, semaphores, pools, FiberMap/FiberSet, Mailbox, Handoff, RcMap,
   RcRef, RateLimiter, SubscriptionRef, synchronized refs, and supervisor
   implementations. Their source modules are under
-  `/home/nvmbr/Work/doll_eyes/node_modules/effect/src/internal/` and the
-  corresponding top-level modules.
+  `node_modules/effect/src/internal/` and the corresponding top-level modules.
 - **Obligations:** preserve execution strategy (sequential, parallel, raced,
   bounded, or inherited), fairness/order, permits, cancellation, child
   ownership, queue backpressure, resource release, and supervisor callbacks.
@@ -705,29 +715,17 @@ async registration, child join, scope close, queue wait, STM retry, or Channel
 executor transition. H015/H016 must audit re-entry and thrown-callback paths.
 H018 must make scheduler, clock, AbortSignal, Promise, and observability
 boundaries explicit and optimizer-visible. H027 must derive its differential
-corpus from the final selected package, not from this provisional 3.22 source
-tree.
+corpus from the selected package and verify it against the manifest hashes.
 
-## 7. Checkpoint and unresolved decisions
+## 7. Checkpoint
 
-H005 ledger checkpoint: **not met**. The complete runtime inventory and
-ownership contract are drafted, but the canonical version, exact root
-dependency record, integrity, source snapshot, and 3.19.19-versus-3.22.0
-source audit remain unresolved. No package-file change is part of this draft.
+H005 ledger checkpoint: **met**. The exact root pin and lock graph, registry
+integrity and artifact hash, upstream tag and commit, selected source tree,
+complete per-file/export manifest, candidate diff, runtime-domain review,
+ownership mapping, and exception-containment rules are recorded and
+reproducibly checked.
 
-Unresolved decisions for the later brain review:
-
-1. Select exactly one canonical version and perform the required direct root
-   pin/provenance update.
-2. Compare the selected source against the other candidate, with special
-   attention to version-sensitive scheduler, runtime flags, async cancellation,
-   finalizer, STM, Channel, Config/Schema, and Micro changes.
-3. Confirm whether the selected package's registry artifact and source tree are
-   identical for the contract, and record the snapshot/hash that makes that
-   answer reproducible.
-4. Materialize and verify the machine-readable module/export/artifact manifest
-   required in §2, including the exact ESM/CJS/generated file lists and
-   per-file hashes; do not treat a package-level hash as a substitute.
-5. Keep the generic Tier 1 completeness rule and all ownership boundaries
-   unchanged unless a brain-level semantic decision explicitly supersedes this
-   contract.
+Future Effect pin changes must regenerate the manifest and repeat the semantic
+audit before changing this contract. H020 still owns implementation. It may not
+narrow the package to a whitelist, normalize callback exceptions, weaken the
+shared ABI/lifetime contracts, or use JSC as a fallback.
