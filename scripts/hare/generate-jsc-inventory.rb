@@ -9,7 +9,7 @@ require "optparse"
 
 WEBKIT_REVISION = "34c01d13391e00c06862a3d2c5b7fff350ac87e0"
 BUN_REVISION = "bbe3f6a2629adf808adbd0da199ae8c94a3c0d47"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 REPOSITORY_ROOT = File.expand_path("../..", __dir__)
 DEFAULT_WEBKIT_ROOT = File.join(REPOSITORY_ROOT, "tmp", "hare-webkit")
@@ -500,6 +500,49 @@ def opcode_owner(name)
   nil
 end
 
+def opcode_effects(name, family, cache_only, value_flow)
+  return [] if cache_only
+
+  effects = ["reads_frame"]
+  has_def = value_flow.any? { |(opcode, _operand), flow| opcode == name && flow.fetch("defines_at").any? }
+  effects << "writes_frame" if has_def || name == "op_enter"
+
+  if family == "control" || name == "op_ret"
+    effects.concat(%w[control_flow heap_read])
+    coercive_branch = name.match?(/\Aop_j(?:eq|neq|less|lesseq|greater|greatereq|nless|nlesseq|ngreater|ngreatereq)\z/)
+    effects.concat(%w[may_call_user may_throw safepoint]) if coercive_branch
+  end
+
+  case family
+  when "object_property"
+    effects.concat(%w[heap_read heap_write may_allocate may_call_user may_throw safepoint])
+  when "function_async_scope"
+    effects.concat(%w[heap_read heap_write may_allocate may_call_user may_throw safepoint])
+    effects << "suspend" if name.match?(/yield|async_iterator/)
+  when "exception_abrupt"
+    if name == "op_catch"
+      effects << "exception_state_read"
+    elsif name == "op_check_traps"
+      effects.concat(%w[interruption_check may_throw safepoint])
+    elsif name == "op_unreachable"
+      effects << "trap"
+    else
+      effects << "throw"
+    end
+  when "module_eval"
+    effects.concat(%w[heap_read heap_write may_allocate may_call_user may_throw realm_access safepoint scope_access])
+  when "numeric_coercion"
+    pure = name.match?(/\Aop_(?:identity_with_profile|is_|typeof(?:_|$)|has_structure|stricteq|nstricteq|eq_null|neq_null|not|below|beloweq)/)
+    if pure
+      effects << "heap_read"
+    else
+      effects.concat(%w[heap_read may_allocate may_call_user may_throw safepoint])
+    end
+  end
+
+  effects.uniq.sort
+end
+
 def capture_opcode_locations(bytecode_path)
   original_op = DSL.method(:op)
   original_group = DSL.method(:op_group)
@@ -762,6 +805,7 @@ sections.each do |section|
     owner_family = cache_only ? ["H006", "encoding_or_dispatch"] : opcode_owner(name)
     fail!("semantic opcode #{name} has no downstream owner/family") unless owner_family
     owner_task, family = owner_family
+    effects = opcode_effects(name, family, cache_only, value_flow)
     generated_type = bytecode ? opcode.capitalized_name : nil
     generated_location = if bytecode
       "Source/JavaScriptCore/bytecode/BytecodeStructs.h::#{generated_type}"
@@ -804,6 +848,7 @@ sections.each do |section|
         "operand_word_count" => opcode.length,
         "owner_task" => owner_task,
         "family" => family,
+        "effects" => effects,
       },
     )
 
@@ -1014,6 +1059,7 @@ sections.each do |section|
       "semantic_role" => opcode_config.fetch("semantic_role"),
       "owner_task" => owner_task,
       "family" => family,
+      "effect_ceiling" => effects.join(","),
       "operands" => operand_names.join(","),
       "semantic_operands" => semantic_operands,
       "cache_only_operands" => cache_operands,
@@ -1630,6 +1676,13 @@ records.each do |entry|
   if entry.fetch("kind") == "operand" && entry.fetch("classification") == "semantic"
     fail!("semantic operand #{entry.fetch('id')} has no field role") if %w[operand cache_hint_or_layout].include?(entry.fetch("field_role"))
   end
+  if %w[opcode helper_opcode].include?(entry.fetch("kind"))
+    if entry.fetch("classification") == "semantic"
+      fail!("semantic opcode #{entry.fetch('id')} has no conservative effect ceiling") if entry.fetch("effects").empty?
+    else
+      fail!("cache-only opcode #{entry.fetch('id')} has effects") unless entry.fetch("effects").empty?
+    end
+  end
 end
 
 duplicate_ids = records.group_by { |entry| entry.fetch("id") }.select { |_id, entries| entries.length > 1 }.keys
@@ -1677,6 +1730,7 @@ manifest = {
   "definitions" => {
     "opcode_dsl" => bytecode_relative,
     "value_flow_rules" => use_def_relative,
+    "effect_policy" => "conservative importer ceiling derived from pinned opcode family and value-flow definitions; H009 IR and H010/H018 helper manifests must preserve or refine it with accepted semantic proof",
     "generated_structs" => "Source/JavaScriptCore/bytecode/BytecodeStructs.h",
     "generated_ids" => "Source/JavaScriptCore/bytecode/Bytecodes.h",
     "width_rules" => [width_path, fits_path, instruction_path],
@@ -1702,7 +1756,7 @@ manifest = {
 manifest_text = JSON.pretty_generate(manifest) + "\n"
 tsv_headers = %w[
   section opcode_id opcode generated_type source_line operand_words widths
-  classification semantic_role owner_task family operands semantic_operands
+  classification semantic_role owner_task family effect_ceiling operands semantic_operands
   cache_only_operands metadata_fields checkpoints temporaries lowering_status
 ]
 tsv_cells = [tsv_headers] + opcode_rows.map { |row| tsv_headers.map { |header| row.fetch(header).to_s } }

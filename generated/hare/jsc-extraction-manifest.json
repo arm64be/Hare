@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "bun_revision": "bbe3f6a2629adf808adbd0da199ae8c94a3c0d47",
   "webkit_revision": "34c01d13391e00c06862a3d2c5b7fff350ac87e0",
   "webkit_repository": "https://github.com/oven-sh/WebKit.git",
@@ -8,6 +8,7 @@
   "definitions": {
     "opcode_dsl": "Source/JavaScriptCore/bytecode/BytecodeList.rb",
     "value_flow_rules": "Source/JavaScriptCore/bytecode/BytecodeUseDef.cpp",
+    "effect_policy": "conservative importer ceiling derived from pinned opcode family and value-flow definitions; H009 IR and H010/H018 helper manifests must preserve or refine it with accepted semantic proof",
     "generated_structs": "Source/JavaScriptCore/bytecode/BytecodeStructs.h",
     "generated_ids": "Source/JavaScriptCore/bytecode/Bytecodes.h",
     "width_rules": [
@@ -11701,7 +11702,16 @@
       "generated_type": "OpAdd",
       "operand_word_count": 5,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_argument_count",
@@ -11740,7 +11750,17 @@
       "generated_type": "OpArgumentCount",
       "operand_word_count": 1,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_async_iterator_next",
@@ -11779,7 +11799,18 @@
       "generated_type": "OpAsyncIteratorNext",
       "operand_word_count": 8,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "suspend",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_async_iterator_open",
@@ -11818,7 +11849,18 @@
       "generated_type": "OpAsyncIteratorOpen",
       "operand_word_count": 9,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "suspend",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_below",
@@ -11857,7 +11899,12 @@
       "generated_type": "OpBelow",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_beloweq",
@@ -11896,7 +11943,12 @@
       "generated_type": "OpBeloweq",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_bitand",
@@ -11935,7 +11987,16 @@
       "generated_type": "OpBitand",
       "operand_word_count": 5,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_bitnot",
@@ -11974,7 +12035,16 @@
       "generated_type": "OpBitnot",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_bitor",
@@ -12013,7 +12083,16 @@
       "generated_type": "OpBitor",
       "operand_word_count": 5,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_bitxor",
@@ -12052,7 +12131,16 @@
       "generated_type": "OpBitxor",
       "operand_word_count": 5,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_call",
@@ -12091,7 +12179,17 @@
       "generated_type": "OpCall",
       "operand_word_count": 6,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_call_direct_eval",
@@ -12130,7 +12228,19 @@
       "generated_type": "OpCallDirectEval",
       "operand_word_count": 9,
       "owner_task": "H017",
-      "family": "module_eval"
+      "family": "module_eval",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "realm_access",
+        "safepoint",
+        "scope_access",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_call_ignore_result",
@@ -12169,7 +12279,16 @@
       "generated_type": "OpCallIgnoreResult",
       "operand_word_count": 4,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_call_varargs",
@@ -12208,7 +12327,17 @@
       "generated_type": "OpCallVarargs",
       "operand_word_count": 8,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_catch",
@@ -12247,7 +12376,12 @@
       "generated_type": "OpCatch",
       "operand_word_count": 3,
       "owner_task": "H016",
-      "family": "exception_abrupt"
+      "family": "exception_abrupt",
+      "effects": [
+        "exception_state_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_check_private_brand",
@@ -12286,7 +12420,16 @@
       "generated_type": "OpCheckPrivateBrand",
       "operand_word_count": 3,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_check_tdz",
@@ -12325,7 +12468,16 @@
       "generated_type": "OpCheckTdz",
       "operand_word_count": 2,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_check_traps",
@@ -12364,7 +12516,13 @@
       "generated_type": "OpCheckTraps",
       "operand_word_count": 0,
       "owner_task": "H016",
-      "family": "exception_abrupt"
+      "family": "exception_abrupt",
+      "effects": [
+        "interruption_check",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_construct",
@@ -12403,7 +12561,17 @@
       "generated_type": "OpConstruct",
       "operand_word_count": 6,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_construct_varargs",
@@ -12442,7 +12610,17 @@
       "generated_type": "OpConstructVarargs",
       "operand_word_count": 8,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_create_async_generator",
@@ -12481,7 +12659,17 @@
       "generated_type": "OpCreateAsyncGenerator",
       "operand_word_count": 3,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_create_cloned_arguments",
@@ -12520,7 +12708,17 @@
       "generated_type": "OpCreateClonedArguments",
       "operand_word_count": 1,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_create_direct_arguments",
@@ -12559,7 +12757,17 @@
       "generated_type": "OpCreateDirectArguments",
       "operand_word_count": 1,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_create_generator",
@@ -12598,7 +12806,17 @@
       "generated_type": "OpCreateGenerator",
       "operand_word_count": 3,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_create_generator_frame_environment",
@@ -12637,7 +12855,17 @@
       "generated_type": "OpCreateGeneratorFrameEnvironment",
       "operand_word_count": 4,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_create_lexical_environment",
@@ -12676,7 +12904,17 @@
       "generated_type": "OpCreateLexicalEnvironment",
       "operand_word_count": 4,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_create_promise",
@@ -12715,7 +12953,17 @@
       "generated_type": "OpCreatePromise",
       "operand_word_count": 3,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_create_rest",
@@ -12754,7 +13002,17 @@
       "generated_type": "OpCreateRest",
       "operand_word_count": 2,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_create_scoped_arguments",
@@ -12793,7 +13051,17 @@
       "generated_type": "OpCreateScopedArguments",
       "operand_word_count": 2,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_create_this",
@@ -12832,7 +13100,17 @@
       "generated_type": "OpCreateThis",
       "operand_word_count": 4,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_debug",
@@ -12867,7 +13145,8 @@
       "generated_type": "OpDebug",
       "operand_word_count": 2,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.Bytecode.op_dec",
@@ -12906,7 +13185,16 @@
       "generated_type": "OpDec",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_define_accessor_property",
@@ -12945,7 +13233,16 @@
       "generated_type": "OpDefineAccessorProperty",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_define_data_property",
@@ -12984,7 +13281,16 @@
       "generated_type": "OpDefineDataProperty",
       "operand_word_count": 4,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_del_by_id",
@@ -13023,7 +13329,17 @@
       "generated_type": "OpDelById",
       "operand_word_count": 4,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_del_by_val",
@@ -13062,7 +13378,17 @@
       "generated_type": "OpDelByVal",
       "operand_word_count": 4,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_div",
@@ -13101,7 +13427,16 @@
       "generated_type": "OpDiv",
       "operand_word_count": 5,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_enter",
@@ -13140,7 +13475,13 @@
       "generated_type": "OpEnter",
       "operand_word_count": 0,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_enumerator_get_by_val",
@@ -13179,7 +13520,17 @@
       "generated_type": "OpEnumeratorGetByVal",
       "operand_word_count": 8,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_enumerator_has_own_property",
@@ -13218,7 +13569,17 @@
       "generated_type": "OpEnumeratorHasOwnProperty",
       "operand_word_count": 7,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_enumerator_in_by_val",
@@ -13257,7 +13618,17 @@
       "generated_type": "OpEnumeratorInByVal",
       "operand_word_count": 7,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_enumerator_next",
@@ -13296,7 +13667,17 @@
       "generated_type": "OpEnumeratorNext",
       "operand_word_count": 6,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_enumerator_put_by_val",
@@ -13335,7 +13716,16 @@
       "generated_type": "OpEnumeratorPutByVal",
       "operand_word_count": 8,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_eq",
@@ -13374,7 +13764,16 @@
       "generated_type": "OpEq",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_eq_null",
@@ -13413,7 +13812,12 @@
       "generated_type": "OpEqNull",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_argument",
@@ -13452,7 +13856,17 @@
       "generated_type": "OpGetArgument",
       "operand_word_count": 3,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_by_id",
@@ -13491,7 +13905,17 @@
       "generated_type": "OpGetById",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_by_id_direct",
@@ -13530,7 +13954,17 @@
       "generated_type": "OpGetByIdDirect",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_by_id_with_this",
@@ -13569,7 +14003,17 @@
       "generated_type": "OpGetByIdWithThis",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_by_val",
@@ -13608,7 +14052,17 @@
       "generated_type": "OpGetByVal",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_by_val_with_this",
@@ -13647,7 +14101,17 @@
       "generated_type": "OpGetByValWithThis",
       "operand_word_count": 6,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_from_arguments",
@@ -13686,7 +14150,17 @@
       "generated_type": "OpGetFromArguments",
       "operand_word_count": 4,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_from_scope",
@@ -13725,7 +14199,17 @@
       "generated_type": "OpGetFromScope",
       "operand_word_count": 8,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_internal_field",
@@ -13764,7 +14248,17 @@
       "generated_type": "OpGetInternalField",
       "operand_word_count": 4,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_length",
@@ -13803,7 +14297,17 @@
       "generated_type": "OpGetLength",
       "operand_word_count": 4,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_parent_scope",
@@ -13842,7 +14346,17 @@
       "generated_type": "OpGetParentScope",
       "operand_word_count": 2,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_private_name",
@@ -13881,7 +14395,17 @@
       "generated_type": "OpGetPrivateName",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_property_enumerator",
@@ -13920,7 +14444,17 @@
       "generated_type": "OpGetPropertyEnumerator",
       "operand_word_count": 2,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_prototype_of",
@@ -13959,7 +14493,17 @@
       "generated_type": "OpGetPrototypeOf",
       "operand_word_count": 3,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_get_scope",
@@ -13998,7 +14542,17 @@
       "generated_type": "OpGetScope",
       "operand_word_count": 1,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_greater",
@@ -14037,7 +14591,16 @@
       "generated_type": "OpGreater",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_greatereq",
@@ -14076,7 +14639,16 @@
       "generated_type": "OpGreatereq",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_has_private_brand",
@@ -14115,7 +14687,17 @@
       "generated_type": "OpHasPrivateBrand",
       "operand_word_count": 3,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_has_private_name",
@@ -14154,7 +14736,17 @@
       "generated_type": "OpHasPrivateName",
       "operand_word_count": 3,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_has_structure_with_flags",
@@ -14193,7 +14785,12 @@
       "generated_type": "OpHasStructureWithFlags",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_identity_with_profile",
@@ -14232,7 +14829,12 @@
       "generated_type": "OpIdentityWithProfile",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_in_by_id",
@@ -14271,7 +14873,17 @@
       "generated_type": "OpInById",
       "operand_word_count": 3,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_in_by_val",
@@ -14310,7 +14922,17 @@
       "generated_type": "OpInByVal",
       "operand_word_count": 4,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_inc",
@@ -14349,7 +14971,16 @@
       "generated_type": "OpInc",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_instanceof",
@@ -14388,7 +15019,17 @@
       "generated_type": "OpInstanceof",
       "operand_word_count": 7,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_is_big_int",
@@ -14427,7 +15068,12 @@
       "generated_type": "OpIsBigInt",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_is_boolean",
@@ -14466,7 +15112,12 @@
       "generated_type": "OpIsBoolean",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_is_callable",
@@ -14505,7 +15156,12 @@
       "generated_type": "OpIsCallable",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_is_cell_with_type",
@@ -14544,7 +15200,12 @@
       "generated_type": "OpIsCellWithType",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_is_constructor",
@@ -14583,7 +15244,12 @@
       "generated_type": "OpIsConstructor",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_is_empty",
@@ -14622,7 +15288,12 @@
       "generated_type": "OpIsEmpty",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_is_number",
@@ -14661,7 +15332,12 @@
       "generated_type": "OpIsNumber",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_is_object",
@@ -14700,7 +15376,12 @@
       "generated_type": "OpIsObject",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_is_undefined_or_null",
@@ -14739,7 +15420,12 @@
       "generated_type": "OpIsUndefinedOrNull",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_iterator_next",
@@ -14778,7 +15464,17 @@
       "generated_type": "OpIteratorNext",
       "operand_word_count": 10,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_iterator_open",
@@ -14817,7 +15513,17 @@
       "generated_type": "OpIteratorOpen",
       "operand_word_count": 9,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jbelow",
@@ -14856,7 +15562,12 @@
       "generated_type": "OpJbelow",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jbeloweq",
@@ -14895,7 +15606,12 @@
       "generated_type": "OpJbeloweq",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jeq",
@@ -14934,7 +15650,15 @@
       "generated_type": "OpJeq",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jeq_null",
@@ -14973,7 +15697,12 @@
       "generated_type": "OpJeqNull",
       "operand_word_count": 2,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jeq_ptr",
@@ -15012,7 +15741,12 @@
       "generated_type": "OpJeqPtr",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jfalse",
@@ -15051,7 +15785,12 @@
       "generated_type": "OpJfalse",
       "operand_word_count": 2,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jgreater",
@@ -15090,7 +15829,15 @@
       "generated_type": "OpJgreater",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jgreatereq",
@@ -15129,7 +15876,15 @@
       "generated_type": "OpJgreatereq",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jless",
@@ -15168,7 +15923,15 @@
       "generated_type": "OpJless",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jlesseq",
@@ -15207,7 +15970,15 @@
       "generated_type": "OpJlesseq",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jmp",
@@ -15246,7 +16017,12 @@
       "generated_type": "OpJmp",
       "operand_word_count": 1,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jneq",
@@ -15285,7 +16061,15 @@
       "generated_type": "OpJneq",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jneq_null",
@@ -15324,7 +16108,12 @@
       "generated_type": "OpJneqNull",
       "operand_word_count": 2,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jneq_ptr",
@@ -15363,7 +16152,12 @@
       "generated_type": "OpJneqPtr",
       "operand_word_count": 4,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jngreater",
@@ -15402,7 +16196,15 @@
       "generated_type": "OpJngreater",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jngreatereq",
@@ -15441,7 +16243,15 @@
       "generated_type": "OpJngreatereq",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jnless",
@@ -15480,7 +16290,15 @@
       "generated_type": "OpJnless",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jnlesseq",
@@ -15519,7 +16337,15 @@
       "generated_type": "OpJnlesseq",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jnstricteq",
@@ -15558,7 +16384,12 @@
       "generated_type": "OpJnstricteq",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jnundefined_or_null",
@@ -15597,7 +16428,12 @@
       "generated_type": "OpJnundefinedOrNull",
       "operand_word_count": 2,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jstricteq",
@@ -15636,7 +16472,12 @@
       "generated_type": "OpJstricteq",
       "operand_word_count": 3,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jtrue",
@@ -15675,7 +16516,12 @@
       "generated_type": "OpJtrue",
       "operand_word_count": 2,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_jundefined_or_null",
@@ -15714,7 +16560,12 @@
       "generated_type": "OpJundefinedOrNull",
       "operand_word_count": 2,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_less",
@@ -15753,7 +16604,16 @@
       "generated_type": "OpLess",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_lesseq",
@@ -15792,7 +16652,16 @@
       "generated_type": "OpLesseq",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_log_shadow_chicken_prologue",
@@ -15827,7 +16696,8 @@
       "generated_type": "OpLogShadowChickenPrologue",
       "operand_word_count": 1,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.Bytecode.op_log_shadow_chicken_tail",
@@ -15862,7 +16732,8 @@
       "generated_type": "OpLogShadowChickenTail",
       "operand_word_count": 2,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.Bytecode.op_loop_hint",
@@ -15897,7 +16768,8 @@
       "generated_type": "OpLoopHint",
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.Bytecode.op_lshift",
@@ -15936,7 +16808,16 @@
       "generated_type": "OpLshift",
       "operand_word_count": 4,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_mod",
@@ -15975,7 +16856,16 @@
       "generated_type": "OpMod",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_mov",
@@ -16014,7 +16904,11 @@
       "generated_type": "OpMov",
       "operand_word_count": 2,
       "owner_task": "H012",
-      "family": "locals"
+      "family": "locals",
+      "effects": [
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_mul",
@@ -16053,7 +16947,16 @@
       "generated_type": "OpMul",
       "operand_word_count": 5,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_negate",
@@ -16092,7 +16995,16 @@
       "generated_type": "OpNegate",
       "operand_word_count": 4,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_neq",
@@ -16131,7 +17043,16 @@
       "generated_type": "OpNeq",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_neq_null",
@@ -16170,7 +17091,12 @@
       "generated_type": "OpNeqNull",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_array",
@@ -16209,7 +17135,17 @@
       "generated_type": "OpNewArray",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_array_buffer",
@@ -16248,7 +17184,17 @@
       "generated_type": "OpNewArrayBuffer",
       "operand_word_count": 4,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_array_with_size",
@@ -16287,7 +17233,17 @@
       "generated_type": "OpNewArrayWithSize",
       "operand_word_count": 3,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_array_with_species",
@@ -16326,7 +17282,17 @@
       "generated_type": "OpNewArrayWithSpecies",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_array_with_spread",
@@ -16365,7 +17331,17 @@
       "generated_type": "OpNewArrayWithSpread",
       "operand_word_count": 4,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_async_func",
@@ -16404,7 +17380,17 @@
       "generated_type": "OpNewAsyncFunc",
       "operand_word_count": 3,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_async_func_exp",
@@ -16443,7 +17429,17 @@
       "generated_type": "OpNewAsyncFuncExp",
       "operand_word_count": 3,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_async_function_generator",
@@ -16482,7 +17478,17 @@
       "generated_type": "OpNewAsyncFunctionGenerator",
       "operand_word_count": 1,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_async_generator_func",
@@ -16521,7 +17527,17 @@
       "generated_type": "OpNewAsyncGeneratorFunc",
       "operand_word_count": 3,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_async_generator_func_exp",
@@ -16560,7 +17576,17 @@
       "generated_type": "OpNewAsyncGeneratorFuncExp",
       "operand_word_count": 3,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_func",
@@ -16599,7 +17625,17 @@
       "generated_type": "OpNewFunc",
       "operand_word_count": 3,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_func_exp",
@@ -16638,7 +17674,17 @@
       "generated_type": "OpNewFuncExp",
       "operand_word_count": 3,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_generator",
@@ -16677,7 +17723,17 @@
       "generated_type": "OpNewGenerator",
       "operand_word_count": 1,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_generator_func",
@@ -16716,7 +17772,17 @@
       "generated_type": "OpNewGeneratorFunc",
       "operand_word_count": 3,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_generator_func_exp",
@@ -16755,7 +17821,17 @@
       "generated_type": "OpNewGeneratorFuncExp",
       "operand_word_count": 3,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_object",
@@ -16794,7 +17870,17 @@
       "generated_type": "OpNewObject",
       "operand_word_count": 3,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_promise",
@@ -16833,7 +17919,17 @@
       "generated_type": "OpNewPromise",
       "operand_word_count": 1,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_new_reg_exp",
@@ -16872,7 +17968,17 @@
       "generated_type": "OpNewRegExp",
       "operand_word_count": 2,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_nop",
@@ -16907,7 +18013,8 @@
       "generated_type": "OpNop",
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.Bytecode.op_not",
@@ -16946,7 +18053,12 @@
       "generated_type": "OpNot",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_nstricteq",
@@ -16985,7 +18097,12 @@
       "generated_type": "OpNstricteq",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_pow",
@@ -17024,7 +18141,16 @@
       "generated_type": "OpPow",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_profile_control_flow",
@@ -17059,7 +18185,8 @@
       "generated_type": "OpProfileControlFlow",
       "operand_word_count": 2,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.Bytecode.op_profile_type",
@@ -17094,7 +18221,8 @@
       "generated_type": "OpProfileType",
       "operand_word_count": 6,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.Bytecode.op_push_with_scope",
@@ -17133,7 +18261,17 @@
       "generated_type": "OpPushWithScope",
       "operand_word_count": 3,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_put_by_id",
@@ -17172,7 +18310,16 @@
       "generated_type": "OpPutById",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_put_by_id_with_this",
@@ -17211,7 +18358,16 @@
       "generated_type": "OpPutByIdWithThis",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_put_by_val",
@@ -17250,7 +18406,16 @@
       "generated_type": "OpPutByVal",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_put_by_val_direct",
@@ -17289,7 +18454,16 @@
       "generated_type": "OpPutByValDirect",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_put_by_val_with_this",
@@ -17328,7 +18502,16 @@
       "generated_type": "OpPutByValWithThis",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_put_getter_by_id",
@@ -17367,7 +18550,16 @@
       "generated_type": "OpPutGetterById",
       "operand_word_count": 4,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_put_getter_by_val",
@@ -17406,7 +18598,16 @@
       "generated_type": "OpPutGetterByVal",
       "operand_word_count": 4,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_put_getter_setter_by_id",
@@ -17445,7 +18646,16 @@
       "generated_type": "OpPutGetterSetterById",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_put_internal_field",
@@ -17484,7 +18694,16 @@
       "generated_type": "OpPutInternalField",
       "operand_word_count": 3,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_put_private_name",
@@ -17523,7 +18742,16 @@
       "generated_type": "OpPutPrivateName",
       "operand_word_count": 5,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_put_setter_by_id",
@@ -17562,7 +18790,16 @@
       "generated_type": "OpPutSetterById",
       "operand_word_count": 4,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_put_setter_by_val",
@@ -17601,7 +18838,16 @@
       "generated_type": "OpPutSetterByVal",
       "operand_word_count": 4,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_put_to_arguments",
@@ -17640,7 +18886,16 @@
       "generated_type": "OpPutToArguments",
       "operand_word_count": 3,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_put_to_scope",
@@ -17679,7 +18934,16 @@
       "generated_type": "OpPutToScope",
       "operand_word_count": 7,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_resolve_scope",
@@ -17718,7 +18982,17 @@
       "generated_type": "OpResolveScope",
       "operand_word_count": 6,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_resolve_scope_for_hoisting_func_decl_in_eval",
@@ -17757,7 +19031,19 @@
       "generated_type": "OpResolveScopeForHoistingFuncDeclInEval",
       "operand_word_count": 3,
       "owner_task": "H017",
-      "family": "module_eval"
+      "family": "module_eval",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "realm_access",
+        "safepoint",
+        "scope_access",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_ret",
@@ -17796,7 +19082,12 @@
       "generated_type": "OpRet",
       "operand_word_count": 1,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_rshift",
@@ -17835,7 +19126,16 @@
       "generated_type": "OpRshift",
       "operand_word_count": 4,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_set_function_name",
@@ -17874,7 +19174,16 @@
       "generated_type": "OpSetFunctionName",
       "operand_word_count": 2,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_set_private_brand",
@@ -17913,7 +19222,16 @@
       "generated_type": "OpSetPrivateBrand",
       "operand_word_count": 3,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_spread",
@@ -17952,7 +19270,17 @@
       "generated_type": "OpSpread",
       "operand_word_count": 2,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_strcat",
@@ -17991,7 +19319,17 @@
       "generated_type": "OpStrcat",
       "operand_word_count": 3,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_stricteq",
@@ -18030,7 +19368,12 @@
       "generated_type": "OpStricteq",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_sub",
@@ -18069,7 +19412,16 @@
       "generated_type": "OpSub",
       "operand_word_count": 5,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_super_construct",
@@ -18108,7 +19460,17 @@
       "generated_type": "OpSuperConstruct",
       "operand_word_count": 6,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_super_construct_varargs",
@@ -18147,7 +19509,17 @@
       "generated_type": "OpSuperConstructVarargs",
       "operand_word_count": 8,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_super_sampler_begin",
@@ -18182,7 +19554,8 @@
       "generated_type": "OpSuperSamplerBegin",
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.Bytecode.op_super_sampler_end",
@@ -18217,7 +19590,8 @@
       "generated_type": "OpSuperSamplerEnd",
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.Bytecode.op_switch_char",
@@ -18256,7 +19630,12 @@
       "generated_type": "OpSwitchChar",
       "operand_word_count": 2,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_switch_imm",
@@ -18295,7 +19674,12 @@
       "generated_type": "OpSwitchImm",
       "operand_word_count": 2,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_switch_string",
@@ -18334,7 +19718,12 @@
       "generated_type": "OpSwitchString",
       "operand_word_count": 2,
       "owner_task": "H012",
-      "family": "control"
+      "family": "control",
+      "effects": [
+        "control_flow",
+        "heap_read",
+        "reads_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_tail_call",
@@ -18373,7 +19762,17 @@
       "generated_type": "OpTailCall",
       "operand_word_count": 5,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_tail_call_varargs",
@@ -18412,7 +19811,17 @@
       "generated_type": "OpTailCallVarargs",
       "operand_word_count": 7,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_throw",
@@ -18451,7 +19860,11 @@
       "generated_type": "OpThrow",
       "operand_word_count": 1,
       "owner_task": "H016",
-      "family": "exception_abrupt"
+      "family": "exception_abrupt",
+      "effects": [
+        "reads_frame",
+        "throw"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_throw_static_error",
@@ -18490,7 +19903,11 @@
       "generated_type": "OpThrowStaticError",
       "operand_word_count": 2,
       "owner_task": "H016",
-      "family": "exception_abrupt"
+      "family": "exception_abrupt",
+      "effects": [
+        "reads_frame",
+        "throw"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_to_number",
@@ -18529,7 +19946,16 @@
       "generated_type": "OpToNumber",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_to_numeric",
@@ -18568,7 +19994,16 @@
       "generated_type": "OpToNumeric",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_to_object",
@@ -18607,7 +20042,17 @@
       "generated_type": "OpToObject",
       "operand_word_count": 4,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_to_primitive",
@@ -18646,7 +20091,16 @@
       "generated_type": "OpToPrimitive",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_to_property_key",
@@ -18685,7 +20139,17 @@
       "generated_type": "OpToPropertyKey",
       "operand_word_count": 2,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_to_property_key_or_number",
@@ -18724,7 +20188,17 @@
       "generated_type": "OpToPropertyKeyOrNumber",
       "operand_word_count": 2,
       "owner_task": "H014",
-      "family": "object_property"
+      "family": "object_property",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_to_string",
@@ -18763,7 +20237,16 @@
       "generated_type": "OpToString",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_to_this",
@@ -18802,7 +20285,17 @@
       "generated_type": "OpToThis",
       "operand_word_count": 4,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_typeof",
@@ -18841,7 +20334,12 @@
       "generated_type": "OpTypeof",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_typeof_is_function",
@@ -18880,7 +20378,12 @@
       "generated_type": "OpTypeofIsFunction",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_typeof_is_object",
@@ -18919,7 +20422,12 @@
       "generated_type": "OpTypeofIsObject",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_typeof_is_undefined",
@@ -18958,7 +20466,12 @@
       "generated_type": "OpTypeofIsUndefined",
       "operand_word_count": 2,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "reads_frame",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_unreachable",
@@ -18997,7 +20510,11 @@
       "generated_type": "OpUnreachable",
       "operand_word_count": 0,
       "owner_task": "H016",
-      "family": "exception_abrupt"
+      "family": "exception_abrupt",
+      "effects": [
+        "reads_frame",
+        "trap"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_unsigned",
@@ -19036,7 +20553,16 @@
       "generated_type": "OpUnsigned",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_urshift",
@@ -19075,7 +20601,16 @@
       "generated_type": "OpUrshift",
       "operand_word_count": 3,
       "owner_task": "H013",
-      "family": "numeric_coercion"
+      "family": "numeric_coercion",
+      "effects": [
+        "heap_read",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "writes_frame"
+      ]
     },
     {
       "id": "opcode.Bytecode.op_wide16",
@@ -19110,7 +20645,8 @@
       "generated_type": "OpWide16",
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.Bytecode.op_wide32",
@@ -19145,7 +20681,8 @@
       "generated_type": "OpWide32",
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.Bytecode.op_yield",
@@ -19184,7 +20721,17 @@
       "generated_type": "OpYield",
       "operand_word_count": 2,
       "owner_task": "H015",
-      "family": "function_async_scope"
+      "family": "function_async_scope",
+      "effects": [
+        "heap_read",
+        "heap_write",
+        "may_allocate",
+        "may_call_user",
+        "may_throw",
+        "reads_frame",
+        "safepoint",
+        "suspend"
+      ]
     },
     {
       "id": "opcode.CLoopHelpers.llint_entry",
@@ -19219,7 +20766,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopHelpers.llint_vm_entry_to_javascript",
@@ -19254,7 +20802,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopHelpers.llint_vm_entry_to_native",
@@ -19289,7 +20838,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_1",
@@ -19324,7 +20874,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_10",
@@ -19359,7 +20910,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_11",
@@ -19394,7 +20946,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_12",
@@ -19429,7 +20982,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_13",
@@ -19464,7 +21018,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_14",
@@ -19499,7 +21054,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_15",
@@ -19534,7 +21090,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_16",
@@ -19569,7 +21126,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_17",
@@ -19604,7 +21162,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_18",
@@ -19639,7 +21198,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_19",
@@ -19674,7 +21234,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_2",
@@ -19709,7 +21270,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_20",
@@ -19744,7 +21306,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_21",
@@ -19779,7 +21342,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_22",
@@ -19814,7 +21378,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_23",
@@ -19849,7 +21414,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_24",
@@ -19884,7 +21450,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_25",
@@ -19919,7 +21486,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_26",
@@ -19954,7 +21522,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_27",
@@ -19989,7 +21558,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_28",
@@ -20024,7 +21594,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_29",
@@ -20059,7 +21630,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_3",
@@ -20094,7 +21666,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_30",
@@ -20129,7 +21702,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_31",
@@ -20164,7 +21738,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_32",
@@ -20199,7 +21774,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_33",
@@ -20234,7 +21810,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_34",
@@ -20269,7 +21846,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_35",
@@ -20304,7 +21882,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_36",
@@ -20339,7 +21918,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_37",
@@ -20374,7 +21954,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_4",
@@ -20409,7 +21990,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_5",
@@ -20444,7 +22026,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_6",
@@ -20479,7 +22062,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_7",
@@ -20514,7 +22098,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_8",
@@ -20549,7 +22134,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_cloop_did_return_from_js_9",
@@ -20584,7 +22170,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.CLoopReturnHelpers.llint_return_to_host",
@@ -20619,7 +22206,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.array_sort_comparator_return_trampoline",
@@ -20654,7 +22242,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.checkpoint_osr_exit_from_inlined_call_trampoline",
@@ -20689,7 +22278,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.checkpoint_osr_exit_trampoline",
@@ -20724,7 +22314,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.fuzzer_return_early_from_loop_hint",
@@ -20759,7 +22350,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.ipint_catch_all_entry",
@@ -20794,7 +22386,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.ipint_catch_entry",
@@ -20829,7 +22422,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.ipint_entry",
@@ -20864,7 +22458,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.ipint_table_catch_all_entry",
@@ -20899,7 +22494,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.ipint_table_catch_allref_entry",
@@ -20934,7 +22530,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.ipint_table_catch_entry",
@@ -20969,7 +22566,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.ipint_table_catch_ref_entry",
@@ -21004,7 +22602,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.ipint_trampoline",
@@ -21039,7 +22638,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_to_wasm_wrapper_entry",
@@ -21074,7 +22674,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_llint_function_for_call_arity_check_tag",
@@ -21109,7 +22710,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_llint_function_for_call_arity_check_untag",
@@ -21144,7 +22746,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_llint_function_for_construct_arity_check_tag",
@@ -21179,7 +22782,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_llint_function_for_construct_arity_check_untag",
@@ -21214,7 +22818,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_op_async_iterator_next",
@@ -21249,7 +22854,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_op_async_iterator_open",
@@ -21284,7 +22890,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_op_call",
@@ -21319,7 +22926,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_op_call_direct_eval_slow",
@@ -21354,7 +22962,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_op_call_ignore_result",
@@ -21389,7 +22998,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_op_call_varargs",
@@ -21424,7 +23034,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_op_construct",
@@ -21459,7 +23070,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_op_construct_varargs",
@@ -21494,7 +23106,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_op_iterator_next",
@@ -21529,7 +23142,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_op_iterator_open",
@@ -21564,7 +23178,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_op_super_construct",
@@ -21599,7 +23214,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.js_trampoline_op_super_construct_varargs",
@@ -21634,7 +23250,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_default_call_trampoline",
@@ -21669,7 +23286,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_eval_prologue",
@@ -21704,7 +23322,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_function_for_call_arity_check",
@@ -21739,7 +23358,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_function_for_call_prologue",
@@ -21774,7 +23394,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_function_for_construct_arity_check",
@@ -21809,7 +23430,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_function_for_construct_prologue",
@@ -21844,7 +23466,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_generic_return_point",
@@ -21879,7 +23502,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_get_host_call_return_value",
@@ -21914,7 +23538,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_handle_uncaught_exception",
@@ -21949,7 +23574,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_internal_function_call_trampoline",
@@ -21984,7 +23610,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_internal_function_construct_trampoline",
@@ -22019,7 +23646,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_module_program_prologue",
@@ -22054,7 +23682,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_native_call_trampoline",
@@ -22089,7 +23718,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_native_construct_trampoline",
@@ -22124,7 +23754,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_polymorphic_closure_call_trampoline",
@@ -22159,7 +23790,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_polymorphic_normal_call_trampoline",
@@ -22194,7 +23826,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_program_prologue",
@@ -22229,7 +23862,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_throw_during_call_trampoline",
@@ -22264,7 +23898,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_throw_from_slow_path_trampoline",
@@ -22299,7 +23934,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_virtual_call_trampoline",
@@ -22334,7 +23970,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_virtual_construct_trampoline",
@@ -22369,7 +24006,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.llint_virtual_tail_call_trampoline",
@@ -22404,7 +24042,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.loop_osr_entry_gate",
@@ -22439,7 +24078,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.normal_osr_exit_trampoline",
@@ -22474,7 +24114,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_async_iterator_next_return_location",
@@ -22509,7 +24150,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_async_iterator_open_return_location",
@@ -22544,7 +24186,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_call_direct_eval_slow_return_location",
@@ -22579,7 +24222,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_call_ignore_result_return_location",
@@ -22614,7 +24258,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_call_return_location",
@@ -22649,7 +24294,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_call_varargs_return_location",
@@ -22684,7 +24330,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_construct_return_location",
@@ -22719,7 +24366,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_construct_varargs_return_location",
@@ -22754,7 +24402,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_enumerator_get_by_val_return_location",
@@ -22789,7 +24438,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_enumerator_in_by_val_return_location",
@@ -22824,7 +24474,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_enumerator_put_by_val_return_location",
@@ -22859,7 +24510,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_get_by_id_direct_return_location",
@@ -22894,7 +24546,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_get_by_id_return_location",
@@ -22929,7 +24582,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_get_by_val_return_location",
@@ -22964,7 +24618,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_get_length_return_location",
@@ -22999,7 +24654,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_in_by_id_return_location",
@@ -23034,7 +24690,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_in_by_val_return_location",
@@ -23069,7 +24726,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_instanceof_return_location",
@@ -23104,7 +24762,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_iterator_next_return_location",
@@ -23139,7 +24798,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_iterator_open_return_location",
@@ -23174,7 +24834,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_put_by_id_return_location",
@@ -23209,7 +24870,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_put_by_val_direct_return_location",
@@ -23244,7 +24906,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_put_by_val_return_location",
@@ -23279,7 +24942,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_super_construct_return_location",
@@ -23314,7 +24978,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.op_super_construct_varargs_return_location",
@@ -23349,7 +25014,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.wasm_ipint_call_return_location",
@@ -23384,7 +25050,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.wasm_throw_from_fault_handler_trampoline_reg_instance",
@@ -23419,7 +25086,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.wasm_throw_from_slow_path_trampoline",
@@ -23454,7 +25122,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.wasm_to_js_wrapper_entry",
@@ -23489,7 +25158,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.wasm_to_wasm_ipint_wrapper_entry",
@@ -23524,7 +25194,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.wasm_trampoline_wasm_ipint_call",
@@ -23559,7 +25230,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "opcode.NativeHelpers.wasm_trampoline_wasm_ipint_tail_call",
@@ -23594,7 +25266,8 @@
       "generated_type": null,
       "operand_word_count": 0,
       "owner_task": "H006",
-      "family": "encoding_or_dispatch"
+      "family": "encoding_or_dispatch",
+      "effects": []
     },
     {
       "id": "operand.op_add.dst",

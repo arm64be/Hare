@@ -10,6 +10,13 @@ writes the 320-row opcode/helper ownership table in
 `OPCODES.tsv` and the field-level extraction contract in
 `generated/hare/jsc-extraction-manifest.json`.
 
+Each semantic application opcode also carries a conservative effect ceiling
+derived from its pinned family and use/definition rules. The ceiling prevents
+an importer from silently omitting frame, control, heap, callback, throw,
+safepoint, suspension, realm, scope, interruption, or trap behavior. It is not
+a runtime-helper contract: H009 may narrow it only with accepted semantic
+proof, while H010 and H018 own concrete helper effects and ABI.
+
 Prepare an ignored checkout at the pinned revision and generate or verify the
 committed outputs:
 
@@ -32,7 +39,8 @@ scripts/hare/generate-jsc-inventory.rb --webkit-root tmp/hare-webkit --check
 
 The generator refuses another revision, modified pinned inputs, count drift,
 an unclassified C++ boundary member, a semantic row without extraction and
-validation destinations, or a cache-only row consumed as program meaning.
+validation destinations, a semantic opcode without an effect ceiling, or a
+cache-only row consumed as program meaning.
 
 ## Effect provenance manifest
 
