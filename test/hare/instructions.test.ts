@@ -80,6 +80,25 @@ test.skipIf(!isLinux)(
       2147483647
       -1
       41
+      64
+      7
+      true
+      true
+      true
+      true
+      true
+      true
+      true
+      true
+      true
+      false
+      false
+      false
+      false
+      true
+      false
+      false
+      true
       hare-42
       42
 
@@ -109,7 +128,22 @@ test.skipIf(!isLinux)(
         compile.stderr.text(),
         compile.exited,
       ]);
-      expect(compileStderr).not.toContain("error:");
+      const compileLines = compileStderr.split("\n");
+      const compileError = compileLines.find(line => line.startsWith("error:"));
+      const failedFunctionId = compileError?.match(/\bf\d+\b/)?.[0];
+      const failedFunctionStart = failedFunctionId
+        ? compileLines.findIndex(line => line.startsWith(`function ${failedFunctionId} `))
+        : -1;
+      const failedFunctionEnd = compileLines.findIndex(
+        (line, index) => index > failedFunctionStart && line.startsWith("function "),
+      );
+      const failedFunctionDump =
+        failedFunctionStart === -1
+          ? ""
+          : compileLines
+              .slice(failedFunctionStart, failedFunctionEnd === -1 ? undefined : failedFunctionEnd)
+              .join("\n");
+      expect({ compileError, failedFunctionDump }).toEqual({ compileError: undefined, failedFunctionDump: "" });
       expect(compileStderr).toContain("hare-dump schema=1");
       expect(compileStderr).toContain("structurally_complete=true");
       expect(readHareGraphFlags(executable) & (1 << 4)).toBe(1 << 4);

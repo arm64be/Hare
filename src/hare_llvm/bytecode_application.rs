@@ -19,6 +19,7 @@ enum ScalarExpression {
     Multiply(Box<Self>, Box<Self>),
     Divide(Box<Self>, Box<Self>),
     Remainder(Box<Self>, Box<Self>),
+    Power(Box<Self>, Box<Self>),
     BitAnd(Box<Self>, Box<Self>),
     BitOr(Box<Self>, Box<Self>),
     BitXor(Box<Self>, Box<Self>),
@@ -28,16 +29,32 @@ enum ScalarExpression {
     Negate(Box<Self>),
     BitNot(Box<Self>),
     Unsigned(Box<Self>),
+    Equal(Box<Self>, Box<Self>),
+    NotEqual(Box<Self>, Box<Self>),
+    Less(Box<Self>, Box<Self>),
+    LessEqual(Box<Self>, Box<Self>),
+    Greater(Box<Self>, Box<Self>),
+    GreaterEqual(Box<Self>, Box<Self>),
+    Below(Box<Self>, Box<Self>),
+    BelowEqual(Box<Self>, Box<Self>),
+    LogicalNot(Box<Self>),
     Call {
         function: FunctionId,
         arguments: Vec<Self>,
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScalarKind {
+    Integer,
+    Boolean,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ScalarFunction {
     id: FunctionId,
     parameter_count: usize,
+    result_kind: ScalarKind,
     result: ScalarExpression,
 }
 
@@ -46,6 +63,7 @@ enum RegisterValue {
     Scalar(ScalarExpression),
     String(Box<str>),
     Concatenation(Vec<Self>),
+    BooleanScalar(ScalarExpression),
     Function(FunctionId),
     ConsoleScope,
     NaNScope,
@@ -53,6 +71,7 @@ enum RegisterValue {
     ConsoleObject,
     ConsoleLog,
     ConsoleNoArgument,
+    Empty,
     Undefined,
     Null,
     Boolean(bool),
@@ -65,21 +84,22 @@ enum RegisterValue {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LoweredBody {
-    result: Option<ScalarExpression>,
+    result: Option<(ScalarKind, ScalarExpression)>,
     writes: Vec<RegisterValue>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum NativeWrite {
     Integer(ScalarExpression),
+    Boolean(ScalarExpression),
     Text(Box<[u8]>),
 }
 
 /// Compile the first executable Tier 1 slice directly from the owned JSC
 /// visitor unit. This slice is deliberately fail-closed: it accepts a closed
-/// integer call graph and `console.log(integer)` only after evaluating every
-/// reachable call with its closed arguments inside the exact safe-integer
-/// domain. Unsupported visitor operations never fall through to runtime JSC.
+/// primitive call graph and admitted `console.log` writes only after proving
+/// every reachable numeric call inside the exact safe-integer domain.
+/// Unsupported visitor operations never fall through to runtime JSC.
 pub fn compile_imported_scalar_application(
     unit: &OwnedVisitorUnit,
     target: TargetLayout,
@@ -100,14 +120,14 @@ pub fn compile_imported_scalar_application(
 
     let mut functions = BTreeMap::new();
     for function in unit.functions.iter().skip(1) {
-        let body = lower_function(unit, function)?;
+        let body = lower_function(unit, function, &functions)?;
         if !body.writes.is_empty() {
             return Err(imported_error(format!(
                 "f{} performs output inside a callable function",
                 function.id.0
             )));
         }
-        let result = body.result.ok_or_else(|| {
+        let (result_kind, result) = body.result.ok_or_else(|| {
             imported_error(format!("f{} has no scalar return value", function.id.0))
         })?;
         functions.insert(
@@ -115,12 +135,13 @@ pub fn compile_imported_scalar_application(
             ScalarFunction {
                 id: function.id,
                 parameter_count: function.num_parameters.saturating_sub(1) as usize,
+                result_kind,
                 result,
             },
         );
     }
 
-    let root_body = lower_function(unit, root)?;
+    let root_body = lower_function(unit, root, &functions)?;
     if root_body.writes.is_empty() {
         return Err(imported_error(
             "root function performs no admitted native output",
@@ -137,6 +158,7 @@ pub fn compile_imported_scalar_application(
 fn lower_function(
     unit: &OwnedVisitorUnit,
     function: &VisitorFunction,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
 ) -> Result<LoweredBody, LlvmError> {
     let mut registers = BTreeMap::new();
     registers.insert(function.scope_register as i64, RegisterValue::Opaque);
@@ -220,8 +242,8 @@ fn lower_function(
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
             }
-            "op_add" | "op_sub" | "op_mul" | "op_div" | "op_mod" | "op_bitand" | "op_bitor"
-            | "op_bitxor" | "op_lshift" | "op_rshift" | "op_urshift" => {
+            "op_add" | "op_sub" | "op_mul" | "op_div" | "op_mod" | "op_pow" | "op_bitand"
+            | "op_bitor" | "op_bitxor" | "op_lshift" | "op_rshift" | "op_urshift" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let left =
                     scalar_register(function, &registers, signed_operand(instruction, "lhs")?)?;
@@ -233,6 +255,7 @@ fn lower_function(
                     "op_mul" => ScalarExpression::Multiply(Box::new(left), Box::new(right)),
                     "op_div" => ScalarExpression::Divide(Box::new(left), Box::new(right)),
                     "op_mod" => ScalarExpression::Remainder(Box::new(left), Box::new(right)),
+                    "op_pow" => ScalarExpression::Power(Box::new(left), Box::new(right)),
                     "op_bitand" => ScalarExpression::BitAnd(Box::new(left), Box::new(right)),
                     "op_bitor" => ScalarExpression::BitOr(Box::new(left), Box::new(right)),
                     "op_bitxor" => ScalarExpression::BitXor(Box::new(left), Box::new(right)),
@@ -244,6 +267,80 @@ fn lower_function(
                     _ => unreachable!(),
                 };
                 registers.insert(destination, RegisterValue::Scalar(expression));
+            }
+            "op_eq" | "op_neq" | "op_stricteq" | "op_nstricteq" | "op_less" | "op_lesseq"
+            | "op_greater" | "op_greatereq" | "op_below" | "op_beloweq" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let left =
+                    scalar_register(function, &registers, signed_operand(instruction, "lhs")?)?;
+                let right =
+                    scalar_register(function, &registers, signed_operand(instruction, "rhs")?)?;
+                let expression = match descriptor.opcode {
+                    "op_eq" | "op_stricteq" => {
+                        ScalarExpression::Equal(Box::new(left), Box::new(right))
+                    }
+                    "op_neq" | "op_nstricteq" => {
+                        ScalarExpression::NotEqual(Box::new(left), Box::new(right))
+                    }
+                    "op_less" => ScalarExpression::Less(Box::new(left), Box::new(right)),
+                    "op_lesseq" => ScalarExpression::LessEqual(Box::new(left), Box::new(right)),
+                    "op_greater" => ScalarExpression::Greater(Box::new(left), Box::new(right)),
+                    "op_greatereq" => {
+                        ScalarExpression::GreaterEqual(Box::new(left), Box::new(right))
+                    }
+                    "op_below" => ScalarExpression::Below(Box::new(left), Box::new(right)),
+                    "op_beloweq" => ScalarExpression::BelowEqual(Box::new(left), Box::new(right)),
+                    _ => unreachable!(),
+                };
+                registers.insert(destination, RegisterValue::BooleanScalar(expression));
+            }
+            "op_eq_null"
+            | "op_neq_null"
+            | "op_is_empty"
+            | "op_typeof_is_undefined"
+            | "op_typeof_is_object"
+            | "op_typeof_is_function"
+            | "op_is_undefined_or_null"
+            | "op_is_boolean"
+            | "op_is_number"
+            | "op_is_big_int"
+            | "op_is_object"
+            | "op_is_callable"
+            | "op_is_constructor" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let value = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "operand")?,
+                )?;
+                let result = known_unary_predicate(descriptor.opcode, &value)
+                    .ok_or_else(|| unsupported(function, instruction, descriptor.opcode))?;
+                registers.insert(destination, RegisterValue::Boolean(result));
+            }
+            "op_is_cell_with_type" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let value = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "operand")?,
+                )?;
+                let _cell_type = unsigned_operand(instruction, "type")?;
+                let is_known_non_cell = matches!(
+                    value,
+                    RegisterValue::Scalar(_)
+                        | RegisterValue::BooleanScalar(_)
+                        | RegisterValue::Undefined
+                        | RegisterValue::Null
+                        | RegisterValue::Boolean(_)
+                        | RegisterValue::NaN
+                        | RegisterValue::NegativeZero
+                        | RegisterValue::PositiveInfinity
+                        | RegisterValue::NegativeInfinity
+                );
+                if !is_known_non_cell {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                }
+                registers.insert(destination, RegisterValue::Boolean(false));
             }
             "op_negate" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -269,6 +366,33 @@ fn lower_function(
                     RegisterValue::Scalar(ScalarExpression::BitNot(Box::new(source))),
                 );
             }
+            "op_not" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let source = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "operand")?,
+                )?;
+                let expression = match source {
+                    RegisterValue::Scalar(expression)
+                    | RegisterValue::BooleanScalar(expression) => {
+                        ScalarExpression::LogicalNot(Box::new(expression))
+                    }
+                    RegisterValue::Boolean(value) => ScalarExpression::Integer(i64::from(!value)),
+                    RegisterValue::Null
+                    | RegisterValue::Undefined
+                    | RegisterValue::NaN
+                    | RegisterValue::NegativeZero => ScalarExpression::Integer(1),
+                    RegisterValue::String(value) if value.is_empty() => {
+                        ScalarExpression::Integer(1)
+                    }
+                    RegisterValue::String(_)
+                    | RegisterValue::PositiveInfinity
+                    | RegisterValue::NegativeInfinity => ScalarExpression::Integer(0),
+                    _ => return Err(unsupported(function, instruction, descriptor.opcode)),
+                };
+                registers.insert(destination, RegisterValue::BooleanScalar(expression));
+            }
             "op_unsigned" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let source = scalar_register(
@@ -292,6 +416,34 @@ fn lower_function(
                 };
                 registers.insert(register, RegisterValue::Scalar(expression));
             }
+            "op_identity_with_profile" => {
+                let register = signed_operand(instruction, "srcDst")?;
+                let value = read_register(function, &registers, register)?;
+                registers.insert(register, value);
+            }
+            "op_to_number" | "op_to_numeric" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let value = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "operand")?,
+                )?;
+                let value = match value {
+                    RegisterValue::Scalar(_)
+                    | RegisterValue::NaN
+                    | RegisterValue::NegativeZero
+                    | RegisterValue::PositiveInfinity
+                    | RegisterValue::NegativeInfinity => value,
+                    RegisterValue::Boolean(value) => {
+                        RegisterValue::Scalar(ScalarExpression::Integer(i64::from(value)))
+                    }
+                    RegisterValue::BooleanScalar(expression) => RegisterValue::Scalar(expression),
+                    RegisterValue::Null => RegisterValue::Scalar(ScalarExpression::Integer(0)),
+                    RegisterValue::Undefined => RegisterValue::NaN,
+                    _ => return Err(unsupported(function, instruction, descriptor.opcode)),
+                };
+                registers.insert(destination, value);
+            }
             "op_to_primitive" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let source =
@@ -299,6 +451,7 @@ fn lower_function(
                 if matches!(
                     source,
                     RegisterValue::Scalar(_)
+                        | RegisterValue::BooleanScalar(_)
                         | RegisterValue::String(_)
                         | RegisterValue::Concatenation(_)
                         | RegisterValue::Undefined
@@ -344,13 +497,21 @@ fn lower_function(
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 };
                 let arguments = scalar_call_arguments(function, instruction, &registers)?;
-                registers.insert(
-                    destination,
-                    RegisterValue::Scalar(ScalarExpression::Call {
-                        function: callee,
-                        arguments,
-                    }),
-                );
+                let callee_function = functions.get(&callee).ok_or_else(|| {
+                    imported_error(format!(
+                        "f{} calls f{} before its scalar result is available",
+                        function.id.0, callee.0
+                    ))
+                })?;
+                let expression = ScalarExpression::Call {
+                    function: callee,
+                    arguments,
+                };
+                let value = match callee_function.result_kind {
+                    ScalarKind::Integer => RegisterValue::Scalar(expression),
+                    ScalarKind::Boolean => RegisterValue::BooleanScalar(expression),
+                };
+                registers.insert(destination, value);
             }
             "op_call_ignore_result" => {
                 let callee = signed_operand(instruction, "callee")?;
@@ -371,8 +532,20 @@ fn lower_function(
             "op_ret" => {
                 let value = signed_operand(instruction, "value")?;
                 match read_register(function, &registers, value)? {
-                    RegisterValue::Scalar(expression) => result = Some(expression),
-                    RegisterValue::Undefined
+                    RegisterValue::Scalar(expression) => {
+                        result = Some((ScalarKind::Integer, expression));
+                    }
+                    RegisterValue::BooleanScalar(expression) => {
+                        result = Some((ScalarKind::Boolean, expression));
+                    }
+                    RegisterValue::Boolean(value) if function.id.0 != 0 => {
+                        result = Some((
+                            ScalarKind::Boolean,
+                            ScalarExpression::Integer(i64::from(value)),
+                        ));
+                    }
+                    RegisterValue::Empty
+                    | RegisterValue::Undefined
                     | RegisterValue::Null
                     | RegisterValue::Boolean(_)
                     | RegisterValue::String(_)
@@ -469,9 +642,8 @@ fn read_register(
             VisitorConstantValue::String(value) => {
                 RegisterValue::String(source_text_to_string(value)?.into_boxed_str())
             }
-            VisitorConstantValue::Empty | VisitorConstantValue::UnimplementedCell(_) => {
-                RegisterValue::Opaque
-            }
+            VisitorConstantValue::Empty => RegisterValue::Empty,
+            VisitorConstantValue::UnimplementedCell(_) => RegisterValue::Opaque,
         });
     }
     registers.get(&register).cloned().ok_or_else(|| {
@@ -496,10 +668,83 @@ fn scalar_register(
     Ok(expression)
 }
 
+fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
+    let known_value = matches!(
+        value,
+        RegisterValue::Scalar(_)
+            | RegisterValue::BooleanScalar(_)
+            | RegisterValue::String(_)
+            | RegisterValue::Concatenation(_)
+            | RegisterValue::Function(_)
+            | RegisterValue::ConsoleObject
+            | RegisterValue::ConsoleLog
+            | RegisterValue::Undefined
+            | RegisterValue::Null
+            | RegisterValue::Boolean(_)
+            | RegisterValue::NaN
+            | RegisterValue::NegativeZero
+            | RegisterValue::PositiveInfinity
+            | RegisterValue::NegativeInfinity
+    );
+    match opcode {
+        "op_is_empty" if matches!(value, RegisterValue::Empty) => Some(true),
+        "op_is_empty" if known_value => Some(false),
+        _ if !known_value => None,
+        "op_eq_null" => Some(matches!(
+            value,
+            RegisterValue::Undefined | RegisterValue::Null
+        )),
+        "op_neq_null" => Some(!matches!(
+            value,
+            RegisterValue::Undefined | RegisterValue::Null
+        )),
+        "op_typeof_is_undefined" => Some(matches!(value, RegisterValue::Undefined)),
+        "op_typeof_is_object" => Some(matches!(
+            value,
+            RegisterValue::Null | RegisterValue::ConsoleObject
+        )),
+        "op_typeof_is_function" => Some(matches!(
+            value,
+            RegisterValue::Function(_) | RegisterValue::ConsoleLog
+        )),
+        "op_is_undefined_or_null" => Some(matches!(
+            value,
+            RegisterValue::Undefined | RegisterValue::Null
+        )),
+        "op_is_boolean" => Some(matches!(
+            value,
+            RegisterValue::Boolean(_) | RegisterValue::BooleanScalar(_)
+        )),
+        "op_is_number" => Some(matches!(
+            value,
+            RegisterValue::Scalar(_)
+                | RegisterValue::NaN
+                | RegisterValue::NegativeZero
+                | RegisterValue::PositiveInfinity
+                | RegisterValue::NegativeInfinity
+        )),
+        "op_is_big_int" => Some(false),
+        "op_is_object" => Some(matches!(
+            value,
+            RegisterValue::Function(_) | RegisterValue::ConsoleObject | RegisterValue::ConsoleLog
+        )),
+        "op_is_callable" => Some(matches!(
+            value,
+            RegisterValue::Function(_) | RegisterValue::ConsoleLog
+        )),
+        "op_is_constructor" => match value {
+            RegisterValue::Function(_) | RegisterValue::ConsoleLog => None,
+            _ => Some(false),
+        },
+        _ => None,
+    }
+}
+
 fn is_admitted_primitive(value: &RegisterValue) -> bool {
     matches!(
         value,
         RegisterValue::Scalar(_)
+            | RegisterValue::BooleanScalar(_)
             | RegisterValue::String(_)
             | RegisterValue::Concatenation(_)
             | RegisterValue::Undefined
@@ -528,6 +773,15 @@ fn normalize_write(
         evaluate(&expression, functions, &[], 0)?;
         return Ok(NativeWrite::Integer(expression));
     }
+    if let RegisterValue::BooleanScalar(expression) = value {
+        let value = evaluate(&expression, functions, &[], 0)?;
+        if !matches!(value, 0 | 1) {
+            return Err(imported_error(
+                "boolean scalar is not normalized to zero or one",
+            ));
+        }
+        return Ok(NativeWrite::Boolean(expression));
+    }
     let mut text = String::new();
     append_console_string(&value, functions, &mut text)?;
     text.push('\n');
@@ -543,6 +797,18 @@ fn append_console_string(
         RegisterValue::Scalar(expression) => {
             let value = evaluate(expression, functions, &[], 0)?;
             write!(output, "{value}").unwrap();
+        }
+        RegisterValue::BooleanScalar(expression) => {
+            let value = evaluate(expression, functions, &[], 0)?;
+            match value {
+                0 => output.push_str("false"),
+                1 => output.push_str("true"),
+                _ => {
+                    return Err(imported_error(
+                        "boolean scalar is not normalized to zero or one",
+                    ));
+                }
+            }
         }
         RegisterValue::String(value) => output.push_str(value),
         RegisterValue::ConsoleNoArgument => {}
@@ -716,6 +982,15 @@ fn evaluate(
             }
             remainder
         }
+        ScalarExpression::Power(left, right) => {
+            let left = evaluate(left, functions, arguments, depth)?;
+            let right = evaluate(right, functions, arguments, depth)?;
+            let exponent = u32::try_from(right).map_err(|_| {
+                imported_error("integer power exponent leaves the admitted non-negative domain")
+            })?;
+            left.checked_pow(exponent)
+                .ok_or_else(|| imported_error("integer power exceeds i64"))?
+        }
         ScalarExpression::BitAnd(left, right) => i64::from(
             to_int32(evaluate(left, functions, arguments, depth)?)
                 & to_int32(evaluate(right, functions, arguments, depth)?),
@@ -757,6 +1032,41 @@ fn evaluate(
         }
         ScalarExpression::Unsigned(value) => {
             i64::from(to_uint32(evaluate(value, functions, arguments, depth)?))
+        }
+        ScalarExpression::Equal(left, right) => i64::from(
+            evaluate(left, functions, arguments, depth)?
+                == evaluate(right, functions, arguments, depth)?,
+        ),
+        ScalarExpression::NotEqual(left, right) => i64::from(
+            evaluate(left, functions, arguments, depth)?
+                != evaluate(right, functions, arguments, depth)?,
+        ),
+        ScalarExpression::Less(left, right) => i64::from(
+            evaluate(left, functions, arguments, depth)?
+                < evaluate(right, functions, arguments, depth)?,
+        ),
+        ScalarExpression::LessEqual(left, right) => i64::from(
+            evaluate(left, functions, arguments, depth)?
+                <= evaluate(right, functions, arguments, depth)?,
+        ),
+        ScalarExpression::Greater(left, right) => i64::from(
+            evaluate(left, functions, arguments, depth)?
+                > evaluate(right, functions, arguments, depth)?,
+        ),
+        ScalarExpression::GreaterEqual(left, right) => i64::from(
+            evaluate(left, functions, arguments, depth)?
+                >= evaluate(right, functions, arguments, depth)?,
+        ),
+        ScalarExpression::Below(left, right) => i64::from(
+            to_uint32(evaluate(left, functions, arguments, depth)?)
+                < to_uint32(evaluate(right, functions, arguments, depth)?),
+        ),
+        ScalarExpression::BelowEqual(left, right) => i64::from(
+            to_uint32(evaluate(left, functions, arguments, depth)?)
+                <= to_uint32(evaluate(right, functions, arguments, depth)?),
+        ),
+        ScalarExpression::LogicalNot(value) => {
+            i64::from(evaluate(value, functions, arguments, depth)? == 0)
         }
         ScalarExpression::Call {
             function,
@@ -833,6 +1143,17 @@ fn emit_application(
     {
         output.push('\n');
     }
+    if writes
+        .iter()
+        .any(|write| matches!(write, NativeWrite::Boolean(_)))
+    {
+        output.push_str(
+            "@.hare.boolean.true = private unnamed_addr constant [5 x i8] c\"true\\0A\", align 1\n",
+        );
+        output.push_str(
+            "@.hare.boolean.false = private unnamed_addr constant [6 x i8] c\"false\\0A\", align 1\n\n",
+        );
+    }
     output.push_str("declare i64 @Bun__Hare__writeStdout(ptr, i64) nounwind\n");
     output.push_str("declare i64 @Bun__Hare__writeInt64Line(i64) nounwind\n\n");
 
@@ -867,6 +1188,32 @@ fn emit_application(
                 );
                 let write_ok = emitter.temporary();
                 let _ = writeln!(emitter.output, "  {write_ok} = icmp sge i64 {written}, 0");
+                write_ok
+            }
+            NativeWrite::Boolean(expression) => {
+                let value = emitter.emit(expression)?;
+                let condition = emitter.temporary();
+                let _ = writeln!(emitter.output, "  {condition} = icmp ne i64 {value}, 0");
+                let pointer = emitter.temporary();
+                let _ = writeln!(
+                    emitter.output,
+                    "  {pointer} = select i1 {condition}, ptr @.hare.boolean.true, ptr @.hare.boolean.false"
+                );
+                let length = emitter.temporary();
+                let _ = writeln!(
+                    emitter.output,
+                    "  {length} = select i1 {condition}, i64 5, i64 6"
+                );
+                let written = emitter.temporary();
+                let _ = writeln!(
+                    emitter.output,
+                    "  {written} = call i64 @Bun__Hare__writeStdout(ptr {pointer}, i64 {length})"
+                );
+                let write_ok = emitter.temporary();
+                let _ = writeln!(
+                    emitter.output,
+                    "  {write_ok} = icmp eq i64 {written}, {length}"
+                );
                 write_ok
             }
             NativeWrite::Text(bytes) => {
@@ -946,6 +1293,57 @@ impl<'a> ExpressionEmitter<'a> {
                 let _ = writeln!(self.output, "  {result} = zext i32 {value} to i64");
                 Ok(result)
             }
+            ScalarExpression::LogicalNot(value) => {
+                let value = self.emit(value)?;
+                let condition = self.temporary();
+                let _ = writeln!(self.output, "  {condition} = icmp eq i64 {value}, 0");
+                let result = self.temporary();
+                let _ = writeln!(self.output, "  {result} = zext i1 {condition} to i64");
+                Ok(result)
+            }
+            ScalarExpression::Equal(left, right)
+            | ScalarExpression::NotEqual(left, right)
+            | ScalarExpression::Less(left, right)
+            | ScalarExpression::LessEqual(left, right)
+            | ScalarExpression::Greater(left, right)
+            | ScalarExpression::GreaterEqual(left, right) => {
+                let left = self.emit(left)?;
+                let right = self.emit(right)?;
+                let predicate = match expression {
+                    ScalarExpression::Equal(_, _) => "eq",
+                    ScalarExpression::NotEqual(_, _) => "ne",
+                    ScalarExpression::Less(_, _) => "slt",
+                    ScalarExpression::LessEqual(_, _) => "sle",
+                    ScalarExpression::Greater(_, _) => "sgt",
+                    ScalarExpression::GreaterEqual(_, _) => "sge",
+                    _ => unreachable!(),
+                };
+                let condition = self.temporary();
+                let _ = writeln!(
+                    self.output,
+                    "  {condition} = icmp {predicate} i64 {left}, {right}"
+                );
+                let result = self.temporary();
+                let _ = writeln!(self.output, "  {result} = zext i1 {condition} to i64");
+                Ok(result)
+            }
+            ScalarExpression::Below(left, right) | ScalarExpression::BelowEqual(left, right) => {
+                let left = self.emit_i32(left)?;
+                let right = self.emit_i32(right)?;
+                let predicate = if matches!(expression, ScalarExpression::Below(_, _)) {
+                    "ult"
+                } else {
+                    "ule"
+                };
+                let condition = self.temporary();
+                let _ = writeln!(
+                    self.output,
+                    "  {condition} = icmp {predicate} i32 {left}, {right}"
+                );
+                let result = self.temporary();
+                let _ = writeln!(self.output, "  {result} = zext i1 {condition} to i64");
+                Ok(result)
+            }
             ScalarExpression::Call {
                 function,
                 arguments,
@@ -961,6 +1359,29 @@ impl<'a> ExpressionEmitter<'a> {
                     "  {result} = call i64 @hare.fn.{}({arguments})",
                     function.0
                 );
+                Ok(result)
+            }
+            ScalarExpression::Power(left, right) => {
+                let ScalarExpression::Integer(exponent) = right.as_ref() else {
+                    return Err(imported_error(
+                        "native integer power requires a closed constant exponent",
+                    ));
+                };
+                let exponent = u32::try_from(*exponent).map_err(|_| {
+                    imported_error("native integer power exponent must be non-negative")
+                })?;
+                if exponent > 64 {
+                    return Err(imported_error(
+                        "native integer power exponent exceeds the unrolled limit",
+                    ));
+                }
+                let base = self.emit(left)?;
+                let mut result = "1".to_string();
+                for _ in 0..exponent {
+                    let product = self.temporary();
+                    let _ = writeln!(self.output, "  {product} = mul i64 {result}, {base}");
+                    result = product;
+                }
                 Ok(result)
             }
             ScalarExpression::Add(left, right)
@@ -1074,6 +1495,7 @@ mod tests {
         let function = ScalarFunction {
             id: FunctionId(1),
             parameter_count: 1,
+            result_kind: ScalarKind::Integer,
             result: ScalarExpression::Add(
                 Box::new(ScalarExpression::Parameter(0)),
                 Box::new(ScalarExpression::Integer(1)),
