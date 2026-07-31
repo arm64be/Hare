@@ -1415,13 +1415,28 @@ pub mod bv2_impl {
 
         #[inline]
         pub(crate) fn lower_hare_application(
+            unit: &hare_ir::OwnedVisitorUnit,
             source: &[u8],
         ) -> Result<Box<[u8]>, hare_llvm::LlvmError> {
             let target = hare_llvm::TargetLayout::host()?;
-            Ok(hare_llvm::compile_static_application(source, target)?
-                .emit_llvm_ir()
-                .into_bytes()
-                .into_boxed_slice())
+            let llvm_ir = match hare_llvm::compile_imported_scalar_application(unit, target) {
+                Ok(llvm_ir) => llvm_ir,
+                Err(imported @ hare_llvm::LlvmError::ImportedApplication(_)) => {
+                    match hare_llvm::compile_static_application(source, target) {
+                        Ok(application) => application.emit_llvm_ir(),
+                        Err(source_error) => {
+                            return Err(hare_llvm::LlvmError::ImportedApplication(
+                                format!(
+                                    "bytecode lowering failed: {imported}; transitional source lowering also failed: {source_error}"
+                                )
+                                .into_boxed_str(),
+                            ));
+                        }
+                    }
+                }
+                Err(error) => return Err(error),
+            };
+            Ok(llvm_ir.into_bytes().into_boxed_slice())
         }
 
         /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` — the

@@ -77,7 +77,6 @@ impl StaticValue {
             Self::Number(value) if value.is_nan() => Ok("NaN".into()),
             Self::Number(value) if *value == f64::INFINITY => Ok("Infinity".into()),
             Self::Number(value) if *value == f64::NEG_INFINITY => Ok("-Infinity".into()),
-            Self::Number(value) if *value == 0.0 && value.is_sign_negative() => Ok("-0".into()),
             Self::Number(value) if *value == 0.0 => Ok("0".into()),
             Self::Number(value)
                 if value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0 =>
@@ -92,6 +91,16 @@ impl StaticValue {
             Self::Null => Ok("null".into()),
             Self::Undefined => Ok("undefined".into()),
         }
+    }
+
+    fn to_console_string(&self) -> Result<String, LlvmError> {
+        if let Self::Number(value) = self
+            && *value == 0.0
+            && value.is_sign_negative()
+        {
+            return Ok("-0".into());
+        }
+        self.to_js_string()
     }
 
     fn to_number(&self) -> Result<f64, LlvmError> {
@@ -478,7 +487,7 @@ impl Parser {
         if !self.take_punct(b')') {
             let expression = self.parse_expression()?;
             let value = self.evaluate(&expression, &BTreeMap::new(), 0)?;
-            stdout.extend_from_slice(value.to_js_string()?.as_bytes());
+            stdout.extend_from_slice(value.to_console_string()?.as_bytes());
             self.expect_punct(b')')?;
         }
         self.expect_punct(b';')?;
@@ -615,6 +624,11 @@ impl Parser {
                 .get(name)
                 .or_else(|| self.globals.get(name))
                 .cloned()
+                .or_else(|| match name.as_ref() {
+                    "NaN" => Some(StaticValue::Number(f64::NAN)),
+                    "Infinity" => Some(StaticValue::Number(f64::INFINITY)),
+                    _ => None,
+                })
                 .ok_or_else(|| static_error(format!("unknown scalar binding {name}"))),
             StaticExpression::Unary { operator, value } => {
                 let value = self.evaluate(value, locals, depth)?.to_number()?;

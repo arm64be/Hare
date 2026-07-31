@@ -2,13 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
 import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
 import { join } from "path";
+import hareInstructionCases from "../hare/instructions/cases.json";
+
+const importedScalarCase = hareInstructionCases.find(testCase => testCase.id === "function.pure-call")!;
 
 describe("Bun.build compile", () => {
   test.skipIf(!isLinux)(
     "--hare links and boots native application code without app bytecode",
     async () => {
       using dir = tempDir("build-compile-hare-frontend", {
-        "app.js": `function nested(value) { return value + 1; } console.log(nested(41));`,
+        "app.js": importedScalarCase.source,
       });
 
       const outfile = join(String(dir), "app");

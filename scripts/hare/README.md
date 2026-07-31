@@ -43,6 +43,22 @@ an unclassified C++ boundary member, a semantic row without extraction and
 validation destinations, a semantic opcode without an effect ceiling, or a
 cache-only row consumed as program meaning.
 
+## Tier 1 correctness queue
+
+`generate-correctness-queue.rb` joins the 183 semantic opcode rows to the
+source-level differential cases in `test/hare/instructions/cases.json` and
+checks every claim against the generated opcode inventory. `exercised` means a
+native test reaches one implemented mode; only `verified` means the case set
+covers the opcode's complete defined semantic matrix. The checked-in queue
+keeps both partial and uncovered rows explicit while W4 converges; the
+completion gate requires all rows to be verified:
+
+```sh
+scripts/hare/generate-correctness-queue.rb
+scripts/hare/generate-correctness-queue.rb --check
+scripts/hare/generate-correctness-queue.rb --check --require-complete
+```
+
 `generate-hare-frontend.rb` consumes those two committed inventories and emits
 the six typed W2 family tables plus the protected C++ accessor switch. It also
 pins the private WebKit headers absent from the packaged JSC SDK, accounts for

@@ -5,6 +5,7 @@
 #include "ZigSourceProvider.h"
 #include "helpers.h"
 
+#include <bit>
 #include <cstdio>
 #include <limits>
 #include <memory>
@@ -30,10 +31,13 @@ struct JSGeneratorTraits {
 #include <JavaScriptCore/BytecodeStructs.h>
 #include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/InstructionStream.h>
+#include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ParserError.h>
 #include <JavaScriptCore/SourceCodeKey.h>
 #include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/StrongInlines.h>
+#include <JavaScriptCore/SymbolTable.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/UnlinkedCodeBlock.h>
 #include <JavaScriptCore/UnlinkedEvalCodeBlock.h>
@@ -47,9 +51,15 @@ struct JSGeneratorTraits {
 extern "C" uint32_t Bun__Hare__visitorBeginFunction(
     void*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
     uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
-    int32_t, int32_t, uint32_t);
+    int32_t, int32_t, int32_t, int32_t, uint32_t);
 extern "C" uint32_t Bun__Hare__visitorInstruction(
     void*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+extern "C" uint32_t Bun__Hare__visitorConstantScalar(
+    void*, uint32_t, uint32_t, uint32_t, uint64_t);
+extern "C" uint32_t Bun__Hare__visitorConstantText(
+    void*, uint32_t, uint32_t, uint32_t, const void*, size_t, uint32_t);
+extern "C" uint32_t Bun__Hare__visitorIdentifier(
+    void*, uint32_t, const void*, size_t, uint32_t);
 extern "C" uint32_t Bun__Hare__visitorOperand(
     void*, const uint8_t*, size_t, uint32_t, uint32_t, int64_t, uint64_t);
 extern "C" uint32_t Bun__Hare__visitorParserError(
@@ -179,6 +189,99 @@ static bool visitInstructionOperands(
     }
 }
 
+static bool emitCopiedText(
+    void* visitorContext, uint32_t index, uint32_t kind,
+    JSC::SourceCodeRepresentation sourceRepresentation, const WTF::String& text)
+{
+    if (text.is8Bit()) {
+        auto span = text.span8();
+        return Bun__Hare__visitorConstantText(
+            visitorContext, index, kind,
+            static_cast<uint32_t>(sourceRepresentation), span.data(), span.size(), 1);
+    }
+    auto span = text.span16();
+    return Bun__Hare__visitorConstantText(
+        visitorContext, index, kind,
+        static_cast<uint32_t>(sourceRepresentation), span.data(), span.size(), 0);
+}
+
+static bool visitConstantsAndIdentifiers(
+    JSC::UnlinkedCodeBlock& block, void* visitorContext)
+{
+    uint32_t index = 0;
+    for (const auto& barrier : block.constantRegisters()) {
+        JSC::JSValue value = barrier.get();
+        auto sourceRepresentation = block.constantSourceCodeRepresentation(index);
+        uint32_t sourceRepresentationRaw = static_cast<uint32_t>(sourceRepresentation);
+        uint32_t kind;
+        uint64_t payload = 0;
+        if (value.isEmpty())
+            kind = 0;
+        else if (value.isUndefined())
+            kind = 1;
+        else if (value.isNull())
+            kind = 2;
+        else if (value.isBoolean()) {
+            kind = 3;
+            payload = value.asBoolean();
+        } else if (value.isInt32()) {
+            kind = 4;
+            payload = static_cast<uint64_t>(static_cast<int64_t>(value.asInt32()));
+        } else if (value.isDouble()) {
+            kind = 5;
+            payload = std::bit_cast<uint64_t>(value.asNumber());
+        } else if (value.isString()) {
+            auto holder = JSC::asString(value)->tryGetValue();
+            const WTF::String& string = holder.data;
+            if (string.isNull()
+                || !emitCopiedText(
+                    visitorContext, index, 6, sourceRepresentation, string))
+                return false;
+            ++index;
+            continue;
+        } else {
+            static constexpr char symbolTable[] = "SymbolTable";
+            static constexpr char unsupportedCell[] = "UnsupportedCell";
+            bool isSymbolTable = dynamicDowncast<JSC::SymbolTable>(value);
+            const char* name = isSymbolTable
+                ? symbolTable
+                : unsupportedCell;
+            size_t length = isSymbolTable
+                ? sizeof(symbolTable) - 1
+                : sizeof(unsupportedCell) - 1;
+            if (!Bun__Hare__visitorConstantText(
+                    visitorContext, index, 7, sourceRepresentationRaw,
+                    name, length, 1))
+                return false;
+            ++index;
+            continue;
+        }
+        if (!Bun__Hare__visitorConstantScalar(
+                visitorContext, index, kind, sourceRepresentationRaw, payload))
+            return false;
+        ++index;
+    }
+
+    index = 0;
+    for (const auto& identifier : block.identifiers()) {
+        const WTF::String& string = identifier.string().string();
+        uint32_t accepted;
+        if (string.is8Bit()) {
+            auto span = string.span8();
+            accepted = Bun__Hare__visitorIdentifier(
+                visitorContext, index, span.data(), span.size(), 1);
+        } else {
+            auto span = string.span16();
+            accepted = Bun__Hare__visitorIdentifier(
+                visitorContext, index, span.data(), span.size(), 0);
+        }
+        if (!accepted)
+            return false;
+        ++index;
+    }
+    return true;
+}
+
 static ImportResult materializeChildren(
     JSC::VM& vm, FunctionRecords& records, uint32_t parentId,
     void* visitorContext)
@@ -243,6 +346,8 @@ static ImportResult visitRecords(JSC::VM& vm, const FunctionRecords& records, vo
         uint32_t numCalleeLocals;
         int32_t thisRegister;
         int32_t scopeRegister;
+        int32_t callFrameThisArgumentRegister;
+        int32_t callFrameFirstArgumentRegister;
         uint32_t instructionBytes;
         {
             auto* record = records[functionId].get();
@@ -261,14 +366,20 @@ static ImportResult visitRecords(JSC::VM& vm, const FunctionRecords& records, vo
             numCalleeLocals = block->numCalleeLocals();
             thisRegister = block->thisRegister().offset();
             scopeRegister = block->scopeRegister().offset();
+            callFrameThisArgumentRegister = JSC::CallFrame::thisArgumentOffset();
+            callFrameFirstArgumentRegister = JSC::CallFrame::argumentOffset(0);
             instructionBytes = block->instructionsSize();
         }
         if (!Bun__Hare__visitorBeginFunction(
                 visitorContext, functionId, parent, relation, relationIndex,
                 specialization, parseMode, scriptMode, codeType, lexicalFeatures,
                 codeFeatures, numParameters, numVars, numCalleeLocals,
-                thisRegister, scopeRegister, instructionBytes))
+                thisRegister, scopeRegister, callFrameThisArgumentRegister,
+                callFrameFirstArgumentRegister, instructionBytes))
             return result(ImportStatus::VisitorRejected, 2);
+        if (!visitConstantsAndIdentifiers(
+                *records[functionId]->block.get(), visitorContext))
+            return result(ImportStatus::VisitorRejected, 6);
 
         uint32_t offset = 0;
         while (offset < instructionBytes) {
@@ -549,4 +660,14 @@ extern "C" int64_t Bun__Hare__writeStdout(
     if (std::fflush(stdout))
         return -1;
     return static_cast<int64_t>(written);
+}
+
+extern "C" int64_t Bun__Hare__writeInt64Line(int64_t value) noexcept
+{
+    char buffer[32];
+    int length = std::snprintf(buffer, sizeof(buffer), "%lld\n", static_cast<long long>(value));
+    if (length < 0 || static_cast<size_t>(length) >= sizeof(buffer))
+        return -1;
+    return Bun__Hare__writeStdout(
+        reinterpret_cast<const uint8_t*>(buffer), static_cast<size_t>(length));
 }

@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use crate::{OperandValue, OwnedVisitorUnit, SourceText, ValidationError};
+use crate::{OperandValue, OwnedVisitorUnit, SourceText, ValidationError, VisitorConstantValue};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DumpIdentity<'a> {
@@ -65,7 +65,7 @@ pub fn render_visitor_dump(
     for function in &unit.functions {
         writeln!(
             output,
-            "function f{} parent={} relation={:?} specialization={:?} source=s{} parse={} script={} code={} lexical=0x{:08x} features=0x{:08x} params={} vars={} locals={} this={} scope={} bytes={}",
+            "function f{} parent={} relation={:?} specialization={:?} source=s{} parse={} script={} code={} lexical=0x{:08x} features=0x{:08x} params={} vars={} locals={} this={} scope={} call_this={} call_arg0={} bytes={}",
             function.id.0,
             function
                 .parent
@@ -83,9 +83,28 @@ pub fn render_visitor_dump(
             function.num_callee_locals,
             function.this_register,
             function.scope_register,
+            function.call_frame_this_argument_register,
+            function.call_frame_first_argument_register,
             function.instruction_bytes
         )
         .unwrap();
+        for (index, constant) in function.constants.iter().enumerate() {
+            writeln!(
+                output,
+                "  constant k{index} source={:?} value={}",
+                constant.source_representation,
+                render_constant_value(&constant.value)
+            )
+            .unwrap();
+        }
+        for (index, identifier) in function.identifiers.iter().enumerate() {
+            writeln!(
+                output,
+                "  identifier id{index} value={}",
+                render_source_text(identifier)
+            )
+            .unwrap();
+        }
         for instruction in &function.instructions {
             writeln!(
                 output,
@@ -119,6 +138,40 @@ pub fn render_visitor_dump(
         .unwrap();
     }
     Ok(output)
+}
+
+fn render_constant_value(value: &VisitorConstantValue) -> String {
+    match value {
+        VisitorConstantValue::Empty => "empty".into(),
+        VisitorConstantValue::Undefined => "undefined".into(),
+        VisitorConstantValue::Null => "null".into(),
+        VisitorConstantValue::Boolean(value) => format!("boolean:{value}"),
+        VisitorConstantValue::Int32(value) => format!("int32:{value}"),
+        VisitorConstantValue::Float64Bits(value) => format!("float64-bits:{value:016x}"),
+        VisitorConstantValue::String(value) => format!("string:{}", render_source_text(value)),
+        VisitorConstantValue::UnimplementedCell(kind) => {
+            format!("unimplemented-cell:{}", escaped(kind))
+        }
+    }
+}
+
+fn render_source_text(value: &SourceText) -> String {
+    match value {
+        SourceText::Latin1(bytes) => {
+            let mut result = String::from("latin1:");
+            for byte in bytes {
+                write!(result, "{byte:02x}").unwrap();
+            }
+            result
+        }
+        SourceText::Utf16(code_units) => {
+            let mut result = String::from("utf16:");
+            for code_unit in code_units {
+                write!(result, "{code_unit:04x}").unwrap();
+            }
+            result
+        }
+    }
 }
 
 fn normalized_public_name(name: &str) -> String {

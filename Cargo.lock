@@ -2772,6 +2772,7 @@ version = "0.0.0"
 name = "hare_llvm"
 version = "0.0.0"
 dependencies = [
+ "hare_frontend",
  "hare_ir",
 ]
 

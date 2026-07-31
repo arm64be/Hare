@@ -1,0 +1,61 @@
+[
+  {
+    "id": "function.pure-call",
+    "family": "function_async_scope",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_new_func_exp",
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call",
+      "op_call_ignore_result",
+      "op_add",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "console.log((function (value) { return value + 1; })(41));"
+  },
+  {
+    "id": "numeric.integer-arithmetic",
+    "family": "numeric_coercion",
+    "lowering": "source-transition",
+    "opcodes": [],
+    "verified_opcodes": [],
+    "source": "console.log((9 * 10 - 6) / 2); console.log(17 % 5);"
+  },
+  {
+    "id": "numeric.primitive-coercion",
+    "family": "numeric_coercion",
+    "lowering": "source-transition",
+    "opcodes": [],
+    "verified_opcodes": [],
+    "source": "console.log(+true + +null); console.log(+undefined); console.log(-0);"
+  },
+  {
+    "id": "numeric.string-concatenation",
+    "family": "numeric_coercion",
+    "lowering": "source-transition",
+    "opcodes": [],
+    "verified_opcodes": [],
+    "source": "console.log(\"hare\" + \"-\" + 42);"
+  },
+  {
+    "id": "locals.scalar-binding",
+    "family": "locals",
+    "lowering": "source-transition",
+    "opcodes": [],
+    "verified_opcodes": [],
+    "source": "const h026Base = 20; let h026Offset = 2; console.log(h026Base * 2 + h026Offset);"
+  },
+  {
+    "id": "console.empty-write",
+    "family": "function_async_scope",
+    "lowering": "source-transition",
+    "opcodes": [],
+    "verified_opcodes": [],
+    "source": "console.log();"
+  }
+]

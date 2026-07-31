@@ -441,6 +441,7 @@ pub(crate) fn write_output_files_to_disk(
                             return Err(crate::Error::BuildFailed);
                         }
                         let llvm_ir = match crate::bundle_v2::dispatch::lower_hare_application(
+                            &unit,
                             &code_result.buffer,
                         ) {
                             Ok(llvm_ir) => llvm_ir,

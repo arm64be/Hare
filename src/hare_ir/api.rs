@@ -4,6 +4,7 @@ use std::fmt;
 pub const HARE_IR_SCHEMA_VERSION: u32 = 1;
 pub const PINNED_BUN_REVISION: &str = "bbe3f6a2629adf808adbd0da199ae8c94a3c0d47";
 pub const PINNED_WEBKIT_REVISION: &str = "34c01d13391e00c06862a3d2c5b7fff350ac87e0";
+pub const FIRST_CONSTANT_REGISTER_INDEX: i64 = 0x4000_0000;
 
 macro_rules! dense_id {
     ($name:ident) => {
@@ -153,6 +154,34 @@ pub struct VisitorInstruction {
     pub operands: Vec<VisitorOperand>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConstantSourceRepresentation {
+    Other,
+    Integer,
+    Double,
+    LinkTimeConstant,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum VisitorConstantValue {
+    Empty,
+    Undefined,
+    Null,
+    Boolean(bool),
+    Int32(i32),
+    Float64Bits(u64),
+    String(SourceText),
+    /// Address-free marker for a declarative cell whose fields have not yet
+    /// crossed the visitor boundary. Any semantic use remains a compile error.
+    UnimplementedCell(Box<str>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VisitorConstant {
+    pub value: VisitorConstantValue,
+    pub source_representation: ConstantSourceRepresentation,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VisitorFunction {
     pub id: FunctionId,
@@ -170,6 +199,10 @@ pub struct VisitorFunction {
     pub num_callee_locals: u32,
     pub this_register: i32,
     pub scope_register: i32,
+    pub call_frame_this_argument_register: i32,
+    pub call_frame_first_argument_register: i32,
+    pub constants: Vec<VisitorConstant>,
+    pub identifiers: Vec<SourceText>,
     pub instruction_bytes: u32,
     pub instructions: Vec<VisitorInstruction>,
 }
@@ -283,6 +316,34 @@ impl OwnedVisitorUnit {
                         || operand.value == OperandValue::Excluded
                     {
                         return Err(ValidationError::CacheOperandCrossedBoundary {
+                            function: function.id,
+                            offset: instruction.byte_offset,
+                        });
+                    }
+                    if matches!(
+                        operand.role,
+                        OperandRole::ValueUse | OperandRole::ConstantOrRegister
+                    ) && let OperandValue::Signed(register) = operand.value
+                        && register >= FIRST_CONSTANT_REGISTER_INDEX
+                        && usize::try_from(register - FIRST_CONSTANT_REGISTER_INDEX)
+                            .ok()
+                            .is_none_or(|index| index >= function.constants.len())
+                    {
+                        return Err(ValidationError::UnknownConstant {
+                            function: function.id,
+                            offset: instruction.byte_offset,
+                            register,
+                        });
+                    }
+                    if operand.role == OperandRole::IdentifierIndex
+                        && match operand.value {
+                            OperandValue::Unsigned(index) => usize::try_from(index)
+                                .ok()
+                                .is_none_or(|index| index >= function.identifiers.len()),
+                            _ => true,
+                        }
+                    {
+                        return Err(ValidationError::UnknownIdentifier {
                             function: function.id,
                             offset: instruction.byte_offset,
                         });
@@ -744,6 +805,10 @@ pub enum ImportError {
     InstructionWithoutFunction,
     InstructionOffset { expected: u32, actual: u32 },
     InvalidInstructionWidth(u32),
+    ConstantWithoutFunction,
+    ConstantOutOfOrder(u32),
+    IdentifierWithoutFunction,
+    IdentifierOutOfOrder(u32),
     OperandWithoutInstruction,
     DuplicateOperandManifest(Box<str>),
     CacheOperandCrossedBoundary(Box<str>),
@@ -828,6 +893,15 @@ pub enum ValidationError {
         offset: u32,
     },
     CacheOperandCrossedBoundary {
+        function: FunctionId,
+        offset: u32,
+    },
+    UnknownConstant {
+        function: FunctionId,
+        offset: u32,
+        register: i64,
+    },
+    UnknownIdentifier {
         function: FunctionId,
         offset: u32,
     },

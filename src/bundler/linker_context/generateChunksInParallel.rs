@@ -1066,6 +1066,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     }
                                 };
                             let llvm_ir = match crate::bundle_v2::dispatch::lower_hare_application(
+                                &unit,
                                 &code_result.buffer,
                             ) {
                                 Ok(llvm_ir) => llvm_ir,

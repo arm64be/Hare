@@ -1,6 +1,7 @@
 //! LLVM text emission and the versioned Hare runtime-helper ABI.
 
 mod application;
+mod bytecode_application;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -8,6 +9,7 @@ use std::fmt;
 use hare_ir::{EffectSet, RuntimeCapabilityId};
 
 pub use application::{NativeApplication, compile_static_application};
+pub use bytecode_application::compile_imported_scalar_application;
 
 pub const HARE_HELPER_MANIFEST_VERSION: u32 = 1;
 
@@ -355,6 +357,7 @@ pub enum LlvmError {
         parameter: Box<str>,
     },
     StaticApplication(Box<str>),
+    ImportedApplication(Box<str>),
 }
 
 impl fmt::Display for LlvmError {

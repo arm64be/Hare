@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use crate::{
     CoverageState, FunctionId, FunctionRelation, FunctionSpecialization, HARE_IR_SCHEMA_VERSION,
     ImportError, InputKind, OperandRole, OperandValue, OwnedVisitorUnit, PINNED_BUN_REVISION,
-    PINNED_WEBKIT_REVISION, SourceId, SourceRecord, VisitorFunction, VisitorInstruction,
-    VisitorOperand,
+    PINNED_WEBKIT_REVISION, SourceId, SourceRecord, SourceText, VisitorConstant, VisitorFunction,
+    VisitorInstruction, VisitorOperand,
 };
 
 /// Single-use builder populated by the sealed JSC bridge.
@@ -50,6 +50,8 @@ impl ImportBuilder {
         num_callee_locals: u32,
         this_register: i32,
         scope_register: i32,
+        call_frame_this_argument_register: i32,
+        call_frame_first_argument_register: i32,
         instruction_bytes: u32,
     ) -> Result<(), ImportError> {
         if id.index() != self.unit.functions.len() {
@@ -74,11 +76,39 @@ impl ImportBuilder {
             num_callee_locals,
             this_register,
             scope_register,
+            call_frame_this_argument_register,
+            call_frame_first_argument_register,
+            constants: Vec::new(),
+            identifiers: Vec::new(),
             instruction_bytes,
             instructions: Vec::new(),
         });
         self.active_function = Some(id);
         self.next_instruction_offset = 0;
+        Ok(())
+    }
+
+    pub fn constant(&mut self, index: u32, constant: VisitorConstant) -> Result<(), ImportError> {
+        let function_id = self
+            .active_function
+            .ok_or(ImportError::ConstantWithoutFunction)?;
+        let function = &mut self.unit.functions[function_id.index()];
+        if usize::try_from(index).ok() != Some(function.constants.len()) {
+            return Err(ImportError::ConstantOutOfOrder(index));
+        }
+        function.constants.push(constant);
+        Ok(())
+    }
+
+    pub fn identifier(&mut self, index: u32, value: SourceText) -> Result<(), ImportError> {
+        let function_id = self
+            .active_function
+            .ok_or(ImportError::IdentifierWithoutFunction)?;
+        let function = &mut self.unit.functions[function_id.index()];
+        if usize::try_from(index).ok() != Some(function.identifiers.len()) {
+            return Err(ImportError::IdentifierOutOfOrder(index));
+        }
+        function.identifiers.push(value);
         Ok(())
     }
 

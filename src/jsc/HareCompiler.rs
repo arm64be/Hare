@@ -3,9 +3,10 @@ use core::ffi::c_void;
 use bun_core::String as BunString;
 use bun_options_types::Format;
 use hare_ir::{
-    FunctionId, FunctionRelation, FunctionSpecialization, HareImportError, ImportBuilder,
-    ImportError, InputKind, OperandRole, OperandValue, OwnedVisitorUnit, ParserDiagnostic,
-    SourceId, SourceRecord, SourceText,
+    ConstantSourceRepresentation, FunctionId, FunctionRelation, FunctionSpecialization,
+    HareImportError, ImportBuilder, ImportError, InputKind, OperandRole, OperandValue,
+    OwnedVisitorUnit, ParserDiagnostic, SourceId, SourceRecord, SourceText, VisitorConstant,
+    VisitorConstantValue,
 };
 
 const NO_PARENT: u32 = u32::MAX;
@@ -97,6 +98,8 @@ extern "C" fn Bun__Hare__visitorBeginFunction(
     num_callee_locals: u32,
     this_register: i32,
     scope_register: i32,
+    call_frame_this_argument_register: i32,
+    call_frame_first_argument_register: i32,
     instruction_bytes: u32,
 ) -> u32 {
     callback_boundary(context, |context| {
@@ -152,6 +155,8 @@ extern "C" fn Bun__Hare__visitorBeginFunction(
             num_callee_locals,
             this_register,
             scope_register,
+            call_frame_this_argument_register,
+            call_frame_first_argument_register,
             instruction_bytes,
         )
     })
@@ -179,6 +184,154 @@ extern "C" fn Bun__Hare__visitorInstruction(
             opcode_id_bytes,
             width_bytes,
         )
+    })
+}
+
+fn constant_source_representation(value: u32) -> Result<ConstantSourceRepresentation, ImportError> {
+    match value {
+        0 => Ok(ConstantSourceRepresentation::Other),
+        1 => Ok(ConstantSourceRepresentation::Integer),
+        2 => Ok(ConstantSourceRepresentation::Double),
+        3 => Ok(ConstantSourceRepresentation::LinkTimeConstant),
+        _ => Err(ImportError::VisitorRejected(
+            "invalid constant source representation".into(),
+        )),
+    }
+}
+
+unsafe fn copy_source_text(
+    data: *const c_void,
+    len: usize,
+    is_latin1: u32,
+) -> Result<SourceText, ImportError> {
+    if len != 0 && data.is_null() {
+        return Err(ImportError::VisitorRejected("null text span".into()));
+    }
+    match is_latin1 {
+        1 => Ok(SourceText::Latin1(if len == 0 {
+            Box::default()
+        } else {
+            // SAFETY: the C++ visitor provides a callback-scoped span and this
+            // function copies it before returning.
+            unsafe { core::slice::from_raw_parts(data.cast::<u8>(), len) }.into()
+        })),
+        0 => Ok(SourceText::Utf16(if len == 0 {
+            Box::default()
+        } else {
+            // SAFETY: same contract as above, with `len` UTF-16 code units.
+            unsafe { core::slice::from_raw_parts(data.cast::<u16>(), len) }.into()
+        })),
+        _ => Err(ImportError::VisitorRejected(
+            "invalid copied-text encoding".into(),
+        )),
+    }
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorConstantScalar(
+    context: *mut c_void,
+    index: u32,
+    kind: u32,
+    source_representation: u32,
+    payload: u64,
+) -> u32 {
+    callback_boundary(context, |context| {
+        let source_representation = constant_source_representation(source_representation)?;
+        let value = match kind {
+            0 => VisitorConstantValue::Empty,
+            1 => VisitorConstantValue::Undefined,
+            2 => VisitorConstantValue::Null,
+            3 => VisitorConstantValue::Boolean(payload != 0),
+            4 => VisitorConstantValue::Int32(payload as u32 as i32),
+            5 => VisitorConstantValue::Float64Bits(payload),
+            _ => {
+                return Err(ImportError::VisitorRejected(
+                    "invalid scalar constant kind".into(),
+                ));
+            }
+        };
+        context
+            .builder
+            .as_mut()
+            .ok_or_else(|| ImportError::VisitorRejected("missing import builder".into()))?
+            .constant(
+                index,
+                VisitorConstant {
+                    value,
+                    source_representation,
+                },
+            )
+    })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorConstantText(
+    context: *mut c_void,
+    index: u32,
+    kind: u32,
+    source_representation: u32,
+    data: *const c_void,
+    len: usize,
+    is_latin1: u32,
+) -> u32 {
+    callback_boundary(context, |context| {
+        let source_representation = constant_source_representation(source_representation)?;
+        // SAFETY: C++ keeps the source span alive for this synchronous callback.
+        let text = unsafe { copy_source_text(data, len, is_latin1)? };
+        let value = match kind {
+            6 => VisitorConstantValue::String(text),
+            7 => {
+                let SourceText::Latin1(bytes) = text else {
+                    return Err(ImportError::VisitorRejected(
+                        "unimplemented-cell name must be Latin-1".into(),
+                    ));
+                };
+                VisitorConstantValue::UnimplementedCell(
+                    core::str::from_utf8(&bytes)
+                        .map_err(|_| {
+                            ImportError::VisitorRejected(
+                                "unimplemented-cell name is not ASCII".into(),
+                            )
+                        })?
+                        .into(),
+                )
+            }
+            _ => {
+                return Err(ImportError::VisitorRejected(
+                    "invalid text constant kind".into(),
+                ));
+            }
+        };
+        context
+            .builder
+            .as_mut()
+            .ok_or_else(|| ImportError::VisitorRejected("missing import builder".into()))?
+            .constant(
+                index,
+                VisitorConstant {
+                    value,
+                    source_representation,
+                },
+            )
+    })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorIdentifier(
+    context: *mut c_void,
+    index: u32,
+    data: *const c_void,
+    len: usize,
+    is_latin1: u32,
+) -> u32 {
+    callback_boundary(context, |context| {
+        // SAFETY: C++ keeps the identifier span alive for this synchronous callback.
+        let text = unsafe { copy_source_text(data, len, is_latin1)? };
+        context
+            .builder
+            .as_mut()
+            .ok_or_else(|| ImportError::VisitorRejected("missing import builder".into()))?
+            .identifier(index, text)
     })
 }
 
@@ -356,9 +509,10 @@ pub fn import_structural_for_hare(
     }
     match result.status {
         0 => {
-            let Some(builder) = context.builder.take() else {
+            let Some(mut builder) = context.builder.take() else {
                 return Err(HareImportError::InternalBridge(result.detail));
             };
+            builder.mark_structurally_complete();
             builder.finish().map_err(HareImportError::Visitor)
         }
         1 => Err(context

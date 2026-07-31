@@ -10,5 +10,5 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+hare_frontend.workspace = true
 hare_ir.workspace = true
-
