@@ -2742,6 +2742,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hare_effect"
+version = "0.0.0"
+dependencies = [
+ "hare_ir",
+ "hare_memory",
+]
+
+[[package]]
 name = "hare_frontend"
 version = "0.0.0"
 dependencies = [
