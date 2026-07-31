@@ -65,7 +65,7 @@ pub fn render_visitor_dump(
     for function in &unit.functions {
         writeln!(
             output,
-            "function f{} parent={} relation={:?} specialization={:?} source=s{} parse={} script={} code={} lexical=0x{:08x} features=0x{:08x} params={} vars={} locals={} this={} scope={} call_this={} call_arg0={} bytes={}",
+            "function f{} parent={} relation={:?} specialization={:?} source=s{} parse={} script={} code={} lexical=0x{:08x} features=0x{:08x} params={} vars={} locals={} this={} scope={} call_callee={} call_this={} call_arg0={} bytes={}",
             function.id.0,
             function
                 .parent
@@ -83,6 +83,7 @@ pub fn render_visitor_dump(
             function.num_callee_locals,
             function.this_register,
             function.scope_register,
+            function.call_frame_callee_register,
             function.call_frame_this_argument_register,
             function.call_frame_first_argument_register,
             function.instruction_bytes

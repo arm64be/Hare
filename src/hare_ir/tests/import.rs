@@ -32,6 +32,7 @@ fn structural_import_is_owned_and_validated() {
             0,
             -1,
             -1,
+            3,
             5,
             6,
             2,

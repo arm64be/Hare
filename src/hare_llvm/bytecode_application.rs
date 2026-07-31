@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::rc::Rc;
 
@@ -56,6 +56,7 @@ enum ScalarKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Builtin {
     Array,
+    CreatePrivateSymbol,
     EmptyPropertyNameEnumerator,
     HasOwnPropertyFunction,
     Object,
@@ -65,7 +66,10 @@ enum Builtin {
 fn builtin_is_callable(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::Array | Builtin::HasOwnPropertyFunction | Builtin::Object
+        Builtin::Array
+            | Builtin::CreatePrivateSymbol
+            | Builtin::HasOwnPropertyFunction
+            | Builtin::Object
     )
 }
 
@@ -111,6 +115,10 @@ enum RegisterValue {
         flags: u32,
         identity: u32,
     },
+    PrivateName {
+        identity: u32,
+        description: Box<str>,
+    },
     ArrayTemplate(Vec<Self>),
     Environment(StaticEnvironmentRef),
     ConsoleScope,
@@ -152,6 +160,8 @@ enum StaticHeapEntry {
         prototype: Option<u32>,
         properties: BTreeMap<Box<str>, StaticProperty>,
         property_order: Vec<Box<str>>,
+        private_properties: BTreeMap<u32, RegisterValue>,
+        private_brands: BTreeSet<u32>,
     },
     Array {
         prototype: Option<u32>,
@@ -159,10 +169,14 @@ enum StaticHeapEntry {
         properties: BTreeMap<Box<str>, StaticProperty>,
         property_order: Vec<Box<str>>,
         length: u32,
+        private_properties: BTreeMap<u32, RegisterValue>,
+        private_brands: BTreeSet<u32>,
     },
     Function {
         properties: BTreeMap<Box<str>, StaticProperty>,
         property_order: Vec<Box<str>>,
+        private_properties: BTreeMap<u32, RegisterValue>,
+        private_brands: BTreeSet<u32>,
     },
 }
 
@@ -190,6 +204,7 @@ struct StaticExecutionState {
     heap: BTreeMap<u32, StaticHeapEntry>,
     next_heap_id: u32,
     next_function_identity: u32,
+    next_private_name_identity: u32,
 }
 
 impl StaticExecutionState {
@@ -208,6 +223,15 @@ impl StaticExecutionState {
             .next_function_identity
             .checked_add(1)
             .ok_or_else(|| imported_error("static function identity overflow"))?;
+        Ok(identity)
+    }
+
+    fn allocate_private_name_identity(&mut self) -> Result<u32, LlvmError> {
+        let identity = self.next_private_name_identity;
+        self.next_private_name_identity = self
+            .next_private_name_identity
+            .checked_add(1)
+            .ok_or_else(|| imported_error("private-name identity overflow"))?;
         Ok(identity)
     }
 }
@@ -275,6 +299,7 @@ pub fn compile_imported_scalar_application(
             None,
             None,
             None,
+            None,
             &mut state,
             0,
         ) else {
@@ -315,6 +340,7 @@ pub fn compile_imported_scalar_application(
         root,
         &functions,
         &call_arities,
+        None,
         None,
         None,
         None,
@@ -415,6 +441,7 @@ fn lower_function(
     explicit_arguments: Option<&[RegisterValue]>,
     explicit_environment: Option<StaticEnvironmentRef>,
     explicit_this: Option<RegisterValue>,
+    explicit_callee: Option<RegisterValue>,
     state: &mut StaticExecutionState,
     call_depth: usize,
 ) -> Result<LoweredBody, LlvmError> {
@@ -434,6 +461,9 @@ fn lower_function(
         function.call_frame_this_argument_register as i64,
         this_value,
     );
+    if let Some(callee) = explicit_callee {
+        registers.insert(function.call_frame_callee_register as i64, callee);
+    }
     let parameter_count = explicit_arguments.map_or_else(
         || static_parameter_count(function, call_arities),
         |arguments| {
@@ -662,6 +692,8 @@ fn lower_function(
                         prototype: None,
                         properties: BTreeMap::new(),
                         property_order: Vec::new(),
+                        private_properties: BTreeMap::new(),
+                        private_brands: BTreeSet::new(),
                     },
                 );
                 registers.insert(destination, RegisterValue::Object(id));
@@ -689,6 +721,8 @@ fn lower_function(
                         prototype: Some(prototype),
                         properties: BTreeMap::new(),
                         property_order: Vec::new(),
+                        private_properties: BTreeMap::new(),
+                        private_brands: BTreeSet::new(),
                     },
                 );
                 registers.insert(destination, RegisterValue::Object(id));
@@ -794,6 +828,8 @@ fn lower_function(
                         properties: BTreeMap::new(),
                         property_order: Vec::new(),
                         length,
+                        private_properties: BTreeMap::new(),
+                        private_brands: BTreeSet::new(),
                     },
                 );
                 registers.insert(destination, RegisterValue::Array(id));
@@ -826,6 +862,8 @@ fn lower_function(
                         properties: BTreeMap::new(),
                         property_order: Vec::new(),
                         length,
+                        private_properties: BTreeMap::new(),
+                        private_brands: BTreeSet::new(),
                     },
                 );
                 registers.insert(destination, RegisterValue::Array(id));
@@ -848,6 +886,8 @@ fn lower_function(
                         properties: BTreeMap::new(),
                         property_order: Vec::new(),
                         length,
+                        private_properties: BTreeMap::new(),
+                        private_brands: BTreeSet::new(),
                     },
                 );
                 registers.insert(destination, RegisterValue::Array(id));
@@ -877,6 +917,8 @@ fn lower_function(
                         properties: BTreeMap::new(),
                         property_order: Vec::new(),
                         length,
+                        private_properties: BTreeMap::new(),
+                        private_brands: BTreeSet::new(),
                     },
                 );
                 registers.insert(destination, RegisterValue::Array(id));
@@ -939,6 +981,8 @@ fn lower_function(
                         properties: BTreeMap::new(),
                         property_order: Vec::new(),
                         length,
+                        private_properties: BTreeMap::new(),
+                        private_brands: BTreeSet::new(),
                     },
                 );
                 registers.insert(destination, RegisterValue::Array(id));
@@ -975,6 +1019,44 @@ fn lower_function(
                 )?;
                 let attributes = static_define_property_attributes(&attributes, functions)?;
                 static_define_data_property(&mut state.heap, &base, property, value, attributes)?;
+            }
+            "op_put_private_name" => {
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "property")?,
+                )?;
+                let value =
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                let put_kind = u32::try_from(unsigned_operand(instruction, "putKind")?)
+                    .map_err(|_| imported_error("private-field put kind exceeds u32"))?;
+                static_put_private_property(&mut state.heap, &base, &property, value, put_kind)?;
+            }
+            "op_get_private_name" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "property")?,
+                )?;
+                let value = static_get_private_property(&state.heap, &base, &property)?;
+                registers.insert(destination, value);
+            }
+            "op_has_private_name" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "property")?,
+                )?;
+                let present = static_has_private_property(&state.heap, &base, &property)?;
+                registers.insert(destination, RegisterValue::Boolean(present));
             }
             "op_new_func" | "op_new_func_exp" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -1029,6 +1111,8 @@ fn lower_function(
                                 },
                             )]),
                             property_order: vec!["constructor".into()],
+                            private_properties: BTreeMap::new(),
+                            private_brands: BTreeSet::new(),
                         },
                     );
                     properties.insert(
@@ -1047,6 +1131,8 @@ fn lower_function(
                     StaticHeapEntry::Function {
                         properties,
                         property_order,
+                        private_properties: BTreeMap::new(),
+                        private_brands: BTreeSet::new(),
                     },
                 );
                 registers.insert(destination, value);
@@ -1170,18 +1256,23 @@ fn lower_function(
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
             }
-            "op_get_by_id" => {
+            "op_get_by_id" | "op_get_by_id_direct" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let base = signed_operand(instruction, "base")?;
                 let property = unsigned_operand(instruction, "property")?;
-                if matches!(registers.get(&base), Some(RegisterValue::ConsoleObject))
+                if descriptor.opcode == "op_get_by_id"
+                    && matches!(registers.get(&base), Some(RegisterValue::ConsoleObject))
                     && identifier_is(function, property, b"log")?
                 {
                     registers.insert(destination, RegisterValue::ConsoleLog);
                 } else if let Some(base) = registers.get(&base) {
                     let property = identifier_string(function, property)?;
-                    let value =
-                        static_get_property(&state.heap, base, StaticPropertyKey::Name(property))?;
+                    let key = StaticPropertyKey::Name(property);
+                    let value = if descriptor.opcode == "op_get_by_id_direct" {
+                        static_get_own_property(&state.heap, base, key)?
+                    } else {
+                        static_get_property(&state.heap, base, key)?
+                    };
                     registers.insert(destination, value);
                 } else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
@@ -1766,11 +1857,31 @@ fn lower_function(
                 let destination = signed_operand(instruction, "dst")?;
                 let callee_register = signed_operand(instruction, "callee")?;
                 let this_value = call_this_value(function, instruction, &registers)?;
+                let callee_value = read_register(function, &registers, callee_register)?;
+                if matches!(
+                    callee_value,
+                    RegisterValue::Builtin(Builtin::CreatePrivateSymbol)
+                ) {
+                    let arguments = call_register_values(function, instruction, &registers)?;
+                    let [RegisterValue::String(description)] = arguments.as_slice() else {
+                        return Err(unsupported(function, instruction, descriptor.opcode));
+                    };
+                    let identity = state.allocate_private_name_identity()?;
+                    registers.insert(
+                        destination,
+                        RegisterValue::PrivateName {
+                            identity,
+                            description: description.clone(),
+                        },
+                    );
+                    instruction_index += 1;
+                    continue;
+                }
                 let RegisterValue::Function {
                     call: callee,
                     environment,
                     ..
-                } = read_register(function, &registers, callee_register)?
+                } = callee_value.clone()
                 else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 };
@@ -1811,6 +1922,7 @@ fn lower_function(
                         Some(&arguments),
                         environment,
                         Some(this_value),
+                        Some(callee_value),
                         state,
                         call_depth + 1,
                     )?;
@@ -1862,6 +1974,7 @@ fn lower_function(
                     call_arities,
                     Some(&arguments),
                     environment,
+                    Some(callee_value.clone()),
                     Some(callee_value),
                     state,
                     call_depth + 1,
@@ -1884,7 +1997,8 @@ fn lower_function(
             }
             "op_call_ignore_result" => {
                 let callee = signed_operand(instruction, "callee")?;
-                match read_register(function, &registers, callee)? {
+                let callee_value = read_register(function, &registers, callee)?;
+                match callee_value.clone() {
                     RegisterValue::ConsoleLog => {
                         let mut arguments =
                             call_register_values(function, instruction, &registers)?;
@@ -1917,6 +2031,7 @@ fn lower_function(
                             Some(&arguments),
                             environment,
                             Some(this_value),
+                            Some(callee_value),
                             state,
                             call_depth + 1,
                         )?;
@@ -2081,6 +2196,7 @@ fn known_truthiness(
         | RegisterValue::ConsoleObject
         | RegisterValue::ConsoleLog
         | RegisterValue::Builtin(_)
+        | RegisterValue::PrivateName { .. }
         | RegisterValue::Arguments(_)
         | RegisterValue::ExceptionObject(_)
         | RegisterValue::Error { .. } => Some(true),
@@ -2179,6 +2295,12 @@ fn known_strict_equality(
         (RegisterValue::Boolean(left), RegisterValue::Boolean(right)) => Some(left == right),
         (RegisterValue::String(left), RegisterValue::String(right)) => Some(left == right),
         (
+            RegisterValue::PrivateName { identity: left, .. },
+            RegisterValue::PrivateName {
+                identity: right, ..
+            },
+        ) => Some(left == right),
+        (
             RegisterValue::Function { identity: left, .. },
             RegisterValue::Function {
                 identity: right, ..
@@ -2221,6 +2343,7 @@ fn known_js_type(value: &RegisterValue) -> Option<&'static str> {
         | RegisterValue::PositiveInfinity
         | RegisterValue::NegativeInfinity => Some("number"),
         RegisterValue::String(_) | RegisterValue::Concatenation(_) => Some("string"),
+        RegisterValue::PrivateName { .. } => Some("symbol"),
         RegisterValue::Function { .. } | RegisterValue::ConsoleLog => Some("function"),
         RegisterValue::Builtin(builtin) if builtin_is_callable(*builtin) => Some("function"),
         RegisterValue::Builtin(Builtin::SentinelString) => Some("string"),
@@ -2358,6 +2481,7 @@ fn register_constant_value(
         ),
         VisitorConstantValue::LinkTimeConstant(name) => match name.as_ref() {
             "Array" => RegisterValue::Builtin(Builtin::Array),
+            "createPrivateSymbol" => RegisterValue::Builtin(Builtin::CreatePrivateSymbol),
             "emptyPropertyNameEnumerator" => {
                 RegisterValue::Builtin(Builtin::EmptyPropertyNameEnumerator)
             }
@@ -2399,6 +2523,7 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
             | RegisterValue::ConsoleObject
             | RegisterValue::ConsoleLog
             | RegisterValue::Builtin(_)
+            | RegisterValue::PrivateName { .. }
             | RegisterValue::Arguments(_)
             | RegisterValue::ExceptionObject(_)
             | RegisterValue::Error { .. }
@@ -2496,6 +2621,7 @@ fn known_typeof(value: &RegisterValue) -> Option<&'static str> {
         | RegisterValue::PositiveInfinity
         | RegisterValue::NegativeInfinity => Some("number"),
         RegisterValue::String(_) | RegisterValue::Concatenation(_) => Some("string"),
+        RegisterValue::PrivateName { .. } => Some("symbol"),
         RegisterValue::Function { .. } | RegisterValue::ConsoleLog => Some("function"),
         RegisterValue::Builtin(builtin) if builtin_is_callable(*builtin) => Some("function"),
         RegisterValue::Builtin(Builtin::SentinelString) => Some("string"),
@@ -2834,6 +2960,7 @@ fn static_enumerable_keys(
         StaticHeapEntry::Function {
             properties,
             property_order,
+            ..
         } => ordered_property_keys(properties, property_order)?,
     };
     Ok((id, keys))
@@ -3007,6 +3134,179 @@ fn static_get_property(
         StaticPropertyKey::Name(name) => inherited_static_property(&name, is_array),
         StaticPropertyKey::Index(_) => Ok(RegisterValue::Undefined),
     }
+}
+
+fn static_get_own_property(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    key: StaticPropertyKey,
+) -> Result<RegisterValue, LlvmError> {
+    if matches!(
+        base,
+        RegisterValue::Arguments(_) | RegisterValue::Error { .. }
+    ) {
+        return static_get_property(heap, base, key);
+    }
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
+        _ => {
+            return Err(imported_error(
+                "direct property read base is not a static object",
+            ));
+        }
+    };
+    let entry = heap.get(&id).ok_or_else(|| {
+        imported_error("direct property read references a missing static heap entry")
+    })?;
+    let value = match (entry, key) {
+        (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Name(name)) => {
+            properties.get(&name).map(|property| property.value.clone())
+        }
+        (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Index(index)) => properties
+            .get(index.to_string().as_str())
+            .map(|property| property.value.clone()),
+        (StaticHeapEntry::Array { length, .. }, StaticPropertyKey::Name(name))
+            if name.as_ref() == "length" =>
+        {
+            Some(RegisterValue::Scalar(ScalarExpression::Integer(i64::from(
+                *length,
+            ))))
+        }
+        (StaticHeapEntry::Array { properties, .. }, StaticPropertyKey::Name(name)) => {
+            properties.get(&name).map(|property| property.value.clone())
+        }
+        (StaticHeapEntry::Array { elements, .. }, StaticPropertyKey::Index(index)) => {
+            elements.get(&index).map(|property| property.value.clone())
+        }
+        (StaticHeapEntry::Function { properties, .. }, StaticPropertyKey::Name(name)) => {
+            properties.get(&name).map(|property| property.value.clone())
+        }
+        (StaticHeapEntry::Function { properties, .. }, StaticPropertyKey::Index(index)) => {
+            properties
+                .get(index.to_string().as_str())
+                .map(|property| property.value.clone())
+        }
+    };
+    Ok(value.unwrap_or(RegisterValue::Undefined))
+}
+
+fn private_name_identity(value: &RegisterValue) -> Result<u32, LlvmError> {
+    match value {
+        RegisterValue::PrivateName { identity, .. } => Ok(*identity),
+        _ => Err(imported_error("private property key is not a private name")),
+    }
+}
+
+fn static_private_properties<'a>(
+    heap: &'a BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+) -> Result<&'a BTreeMap<u32, RegisterValue>, LlvmError> {
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
+        _ => {
+            return Err(imported_error(
+                "private property base is not a static object",
+            ));
+        }
+    };
+    match heap
+        .get(&id)
+        .ok_or_else(|| imported_error("private property references a missing static heap entry"))?
+    {
+        StaticHeapEntry::Object {
+            private_properties, ..
+        }
+        | StaticHeapEntry::Array {
+            private_properties, ..
+        }
+        | StaticHeapEntry::Function {
+            private_properties, ..
+        } => Ok(private_properties),
+    }
+}
+
+fn static_private_properties_mut<'a>(
+    heap: &'a mut BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+) -> Result<&'a mut BTreeMap<u32, RegisterValue>, LlvmError> {
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
+        _ => {
+            return Err(imported_error(
+                "private property base is not a static object",
+            ));
+        }
+    };
+    match heap
+        .get_mut(&id)
+        .ok_or_else(|| imported_error("private property references a missing static heap entry"))?
+    {
+        StaticHeapEntry::Object {
+            private_properties, ..
+        }
+        | StaticHeapEntry::Array {
+            private_properties, ..
+        }
+        | StaticHeapEntry::Function {
+            private_properties, ..
+        } => Ok(private_properties),
+    }
+}
+
+fn static_put_private_property(
+    heap: &mut BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    property: &RegisterValue,
+    value: RegisterValue,
+    put_kind: u32,
+) -> Result<(), LlvmError> {
+    let identity = private_name_identity(property)?;
+    let properties = static_private_properties_mut(heap, base)?;
+    match put_kind {
+        1 => {
+            let existing = properties
+                .get_mut(&identity)
+                .ok_or_else(|| imported_error("private field set failed its brand check"))?;
+            *existing = value;
+        }
+        2 => {
+            if properties.insert(identity, value).is_some() {
+                return Err(imported_error(
+                    "private field definition encountered an existing field",
+                ));
+            }
+        }
+        _ => {
+            return Err(imported_error(format!(
+                "private-field put kind {put_kind} is not admitted"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn static_get_private_property(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    property: &RegisterValue,
+) -> Result<RegisterValue, LlvmError> {
+    let identity = private_name_identity(property)?;
+    static_private_properties(heap, base)?
+        .get(&identity)
+        .cloned()
+        .ok_or_else(|| imported_error("private field read failed its brand check"))
+}
+
+fn static_has_private_property(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    property: &RegisterValue,
+) -> Result<bool, LlvmError> {
+    let identity = private_name_identity(property)?;
+    Ok(static_private_properties(heap, base)?.contains_key(&identity))
 }
 
 fn static_lookup_property(
@@ -3195,6 +3495,7 @@ fn static_put_property(
             StaticHeapEntry::Function {
                 properties,
                 property_order,
+                ..
             },
             StaticPropertyKey::Name(name),
         ) => {
@@ -3207,6 +3508,7 @@ fn static_put_property(
             StaticHeapEntry::Function {
                 properties,
                 property_order,
+                ..
             },
             StaticPropertyKey::Index(index),
         ) => {
@@ -3315,6 +3617,7 @@ fn static_define_data_property(
             | StaticHeapEntry::Function {
                 properties,
                 property_order,
+                ..
             },
             StaticPropertyKey::Name(name),
         ) => define(properties, property_order, name, value),
@@ -3327,6 +3630,7 @@ fn static_define_data_property(
             | StaticHeapEntry::Function {
                 properties,
                 property_order,
+                ..
             },
             StaticPropertyKey::Index(index),
         ) => define(
@@ -3552,6 +3856,7 @@ fn static_delete_property(
             StaticHeapEntry::Function {
                 properties,
                 property_order,
+                ..
             },
             StaticPropertyKey::Name(name),
         ) => {
@@ -3563,6 +3868,7 @@ fn static_delete_property(
             StaticHeapEntry::Function {
                 properties,
                 property_order,
+                ..
             },
             StaticPropertyKey::Index(index),
         ) => {

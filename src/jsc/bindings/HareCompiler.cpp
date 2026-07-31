@@ -54,7 +54,7 @@ struct JSGeneratorTraits {
 extern "C" uint32_t Bun__Hare__visitorBeginFunction(
     void*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
     uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
-    int32_t, int32_t, int32_t, int32_t, uint32_t);
+    int32_t, int32_t, int32_t, int32_t, int32_t, uint32_t);
 extern "C" uint32_t Bun__Hare__visitorInstruction(
     void*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
 extern "C" uint32_t Bun__Hare__visitorConstantScalar(
@@ -556,6 +556,7 @@ static ImportResult visitRecords(JSC::VM& vm, const FunctionRecords& records, vo
         uint32_t numCalleeLocals;
         int32_t thisRegister;
         int32_t scopeRegister;
+        int32_t callFrameCalleeRegister;
         int32_t callFrameThisArgumentRegister;
         int32_t callFrameFirstArgumentRegister;
         uint32_t instructionBytes;
@@ -576,6 +577,7 @@ static ImportResult visitRecords(JSC::VM& vm, const FunctionRecords& records, vo
             numCalleeLocals = block->numCalleeLocals();
             thisRegister = block->thisRegister().offset();
             scopeRegister = block->scopeRegister().offset();
+            callFrameCalleeRegister = static_cast<int32_t>(JSC::CallFrameSlot::callee);
             callFrameThisArgumentRegister = JSC::CallFrame::thisArgumentOffset();
             callFrameFirstArgumentRegister = JSC::CallFrame::argumentOffset(0);
             instructionBytes = block->instructionsSize();
@@ -584,7 +586,8 @@ static ImportResult visitRecords(JSC::VM& vm, const FunctionRecords& records, vo
                 visitorContext, functionId, parent, relation, relationIndex,
                 specialization, parseMode, scriptMode, codeType, lexicalFeatures,
                 codeFeatures, numParameters, numVars, numCalleeLocals,
-                thisRegister, scopeRegister, callFrameThisArgumentRegister,
+                thisRegister, scopeRegister, callFrameCalleeRegister,
+                callFrameThisArgumentRegister,
                 callFrameFirstArgumentRegister, instructionBytes))
             return result(ImportStatus::VisitorRejected, 2);
         if (!visitSwitchTables(*records[functionId]->block.get(), visitorContext))

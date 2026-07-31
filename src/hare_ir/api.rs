@@ -253,6 +253,7 @@ pub struct VisitorFunction {
     pub num_callee_locals: u32,
     pub this_register: i32,
     pub scope_register: i32,
+    pub call_frame_callee_register: i32,
     pub call_frame_this_argument_register: i32,
     pub call_frame_first_argument_register: i32,
     pub constants: Vec<VisitorConstant>,
