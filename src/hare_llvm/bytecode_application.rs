@@ -119,6 +119,7 @@ enum RegisterValue {
         identity: u32,
         description: Box<str>,
     },
+    AccessorGetter(Box<Self>),
     ArrayTemplate(Vec<Self>),
     Environment(StaticEnvironmentRef),
     ConsoleScope,
@@ -183,6 +184,9 @@ enum StaticHeapEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StaticProperty {
     value: RegisterValue,
+    getter: Option<RegisterValue>,
+    setter: Option<RegisterValue>,
+    is_accessor: bool,
     writable: bool,
     enumerable: bool,
     configurable: bool,
@@ -192,10 +196,40 @@ impl StaticProperty {
     fn assigned(value: RegisterValue) -> Self {
         Self {
             value,
+            getter: None,
+            setter: None,
+            is_accessor: false,
             writable: true,
             enumerable: true,
             configurable: true,
         }
+    }
+
+    fn accessor(
+        getter: Option<RegisterValue>,
+        setter: Option<RegisterValue>,
+        enumerable: bool,
+        configurable: bool,
+    ) -> Self {
+        Self {
+            value: RegisterValue::Undefined,
+            getter,
+            setter,
+            is_accessor: true,
+            writable: false,
+            enumerable,
+            configurable,
+        }
+    }
+
+    fn read(&self) -> RegisterValue {
+        if !self.is_accessor {
+            return self.value.clone();
+        }
+        self.getter
+            .clone()
+            .map(|getter| RegisterValue::AccessorGetter(Box::new(getter)))
+            .unwrap_or(RegisterValue::Undefined)
     }
 }
 
@@ -943,7 +977,7 @@ fn lower_function(
                     .map(|index| {
                         elements
                             .get(&index)
-                            .map(|property| property.value.clone())
+                            .map(StaticProperty::read)
                             .unwrap_or(RegisterValue::Undefined)
                     })
                     .collect();
@@ -994,11 +1028,21 @@ fn lower_function(
                     read_register(function, &registers, signed_operand(instruction, "value")?)?;
                 let property =
                     identifier_string(function, unsigned_operand(instruction, "property")?)?;
-                static_put_property(
+                let assignment = static_set_property(
                     &mut state.heap,
                     &base,
                     StaticPropertyKey::Name(property),
+                    value.clone(),
+                )?;
+                apply_static_property_assignment(
+                    unit,
+                    functions,
+                    call_arities,
+                    assignment,
+                    base,
                     value,
+                    state,
+                    call_depth,
                 )?;
             }
             "op_define_data_property" => {
@@ -1019,6 +1063,141 @@ fn lower_function(
                 )?;
                 let attributes = static_define_property_attributes(&attributes, functions)?;
                 static_define_data_property(&mut state.heap, &base, property, value, attributes)?;
+            }
+            "op_put_getter_by_id" | "op_put_setter_by_id" => {
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property = StaticPropertyKey::Name(identifier_string(
+                    function,
+                    unsigned_operand(instruction, "property")?,
+                )?);
+                let attributes = unsigned_operand(instruction, "attributes")?;
+                let accessor = static_accessor_value(read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "accessor")?,
+                )?)?;
+                let (getter, setter) = if descriptor.opcode == "op_put_getter_by_id" {
+                    (
+                        StaticAccessorUpdate::Set(accessor),
+                        StaticAccessorUpdate::Preserve,
+                    )
+                } else {
+                    (
+                        StaticAccessorUpdate::Preserve,
+                        StaticAccessorUpdate::Set(accessor),
+                    )
+                };
+                static_put_accessor(&mut state.heap, &base, property, attributes, getter, setter)?;
+            }
+            "op_put_getter_by_val" | "op_put_setter_by_val" => {
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "property")?,
+                )?;
+                let property = static_property_key(&property, functions)?;
+                let attributes = unsigned_operand(instruction, "attributes")?;
+                let accessor = static_accessor_value(read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "accessor")?,
+                )?)?;
+                let (getter, setter) = if descriptor.opcode == "op_put_getter_by_val" {
+                    (
+                        StaticAccessorUpdate::Set(accessor),
+                        StaticAccessorUpdate::Preserve,
+                    )
+                } else {
+                    (
+                        StaticAccessorUpdate::Preserve,
+                        StaticAccessorUpdate::Set(accessor),
+                    )
+                };
+                static_put_accessor(&mut state.heap, &base, property, attributes, getter, setter)?;
+            }
+            "op_put_getter_setter_by_id" => {
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property = StaticPropertyKey::Name(identifier_string(
+                    function,
+                    unsigned_operand(instruction, "property")?,
+                )?);
+                let attributes = unsigned_operand(instruction, "attributes")?;
+                let getter = static_accessor_value(read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "getter")?,
+                )?)?;
+                let setter = static_accessor_value(read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "setter")?,
+                )?)?;
+                static_put_accessor(
+                    &mut state.heap,
+                    &base,
+                    property,
+                    attributes,
+                    StaticAccessorUpdate::Set(getter),
+                    StaticAccessorUpdate::Set(setter),
+                )?;
+            }
+            "op_to_property_key" | "op_to_property_key_or_number" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let source =
+                    read_register(function, &registers, signed_operand(instruction, "src")?)?;
+                let value = if descriptor.opcode == "op_to_property_key_or_number"
+                    && matches!(
+                        &source,
+                        RegisterValue::Scalar(_)
+                            | RegisterValue::NaN
+                            | RegisterValue::NegativeZero
+                            | RegisterValue::PositiveInfinity
+                            | RegisterValue::NegativeInfinity
+                    ) {
+                    source
+                } else if matches!(&source, RegisterValue::PrivateName { .. }) {
+                    source
+                } else {
+                    match static_property_key(&source, functions)? {
+                        StaticPropertyKey::Index(index) => {
+                            RegisterValue::String(index.to_string().into_boxed_str())
+                        }
+                        StaticPropertyKey::Name(name) => RegisterValue::String(name),
+                    }
+                };
+                registers.insert(destination, value);
+            }
+            "op_set_function_name" => {
+                let function_value = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "function")?,
+                )?;
+                if !matches!(function_value, RegisterValue::Function { .. }) {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                }
+                let name =
+                    read_register(function, &registers, signed_operand(instruction, "name")?)?;
+                let name = match static_property_key(&name, functions)? {
+                    StaticPropertyKey::Index(index) => index.to_string().into_boxed_str(),
+                    StaticPropertyKey::Name(name) => name,
+                };
+                static_define_data_property(
+                    &mut state.heap,
+                    &function_value,
+                    StaticPropertyKey::Name("name".into()),
+                    RegisterValue::String(name),
+                    StaticDefinePropertyAttributes {
+                        configurable: Some(true),
+                        enumerable: Some(false),
+                        writable: Some(false),
+                        has_value: true,
+                    },
+                )?;
             }
             "op_put_private_name" => {
                 let base =
@@ -1132,6 +1311,9 @@ fn lower_function(
                                 "constructor".into(),
                                 StaticProperty {
                                     value: value.clone(),
+                                    getter: None,
+                                    setter: None,
+                                    is_accessor: false,
                                     writable: true,
                                     enumerable: false,
                                     configurable: true,
@@ -1146,6 +1328,9 @@ fn lower_function(
                         "prototype".into(),
                         StaticProperty {
                             value: RegisterValue::Object(prototype_id),
+                            getter: None,
+                            setter: None,
+                            is_accessor: false,
                             writable: true,
                             enumerable: false,
                             configurable: false,
@@ -1292,14 +1477,23 @@ fn lower_function(
                     && identifier_is(function, property, b"log")?
                 {
                     registers.insert(destination, RegisterValue::ConsoleLog);
-                } else if let Some(base) = registers.get(&base) {
+                } else if let Some(base) = registers.get(&base).cloned() {
                     let property = identifier_string(function, property)?;
                     let key = StaticPropertyKey::Name(property);
                     let value = if descriptor.opcode == "op_get_by_id_direct" {
-                        static_get_own_property(&state.heap, base, key)?
+                        static_get_own_property(&state.heap, &base, key)?
                     } else {
-                        static_get_property(&state.heap, base, key)?
+                        static_get_property(&state.heap, &base, key)?
                     };
+                    let value = resolve_static_property_read(
+                        unit,
+                        functions,
+                        call_arities,
+                        value,
+                        base,
+                        state,
+                        call_depth,
+                    )?;
                     registers.insert(destination, value);
                 } else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
@@ -1439,6 +1633,15 @@ fn lower_function(
                     &base,
                     StaticPropertyKey::Name(property_name),
                 )?;
+                let value = resolve_static_property_read(
+                    unit,
+                    functions,
+                    call_arities,
+                    value,
+                    base,
+                    state,
+                    call_depth,
+                )?;
                 registers.insert(destination, value);
             }
             "op_enumerator_in_by_val" | "op_enumerator_has_own_property" => {
@@ -1492,11 +1695,21 @@ fn lower_function(
                 };
                 let value =
                     read_register(function, &registers, signed_operand(instruction, "value")?)?;
-                static_put_property(
+                let assignment = static_set_property(
                     &mut state.heap,
                     &base,
                     StaticPropertyKey::Name(property_name),
+                    value.clone(),
+                )?;
+                apply_static_property_assignment(
+                    unit,
+                    functions,
+                    call_arities,
+                    assignment,
+                    base,
                     value,
+                    state,
+                    call_depth,
                 )?;
             }
             "op_get_by_val" => {
@@ -1510,6 +1723,15 @@ fn lower_function(
                 )?;
                 let property = static_property_key(&property, functions)?;
                 let value = static_get_property(&state.heap, &base, property)?;
+                let value = resolve_static_property_read(
+                    unit,
+                    functions,
+                    call_arities,
+                    value,
+                    base,
+                    state,
+                    call_depth,
+                )?;
                 registers.insert(destination, value);
             }
             "op_put_by_val" | "op_put_by_val_direct" => {
@@ -1523,7 +1745,22 @@ fn lower_function(
                 let property = static_property_key(&property, functions)?;
                 let value =
                     read_register(function, &registers, signed_operand(instruction, "value")?)?;
-                static_put_property(&mut state.heap, &base, property, value)?;
+                if descriptor.opcode == "op_put_by_val_direct" {
+                    static_put_property(&mut state.heap, &base, property, value)?;
+                } else {
+                    let assignment =
+                        static_set_property(&mut state.heap, &base, property, value.clone())?;
+                    apply_static_property_assignment(
+                        unit,
+                        functions,
+                        call_arities,
+                        assignment,
+                        base,
+                        value,
+                        state,
+                        call_depth,
+                    )?;
+                }
             }
             "op_in_by_id" | "op_in_by_val" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -2101,6 +2338,101 @@ fn lower_function(
         writes,
         abrupt,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_static_accessor(
+    unit: &OwnedVisitorUnit,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
+    call_arities: &BTreeMap<FunctionId, usize>,
+    callee: RegisterValue,
+    receiver: RegisterValue,
+    arguments: &[RegisterValue],
+    state: &mut StaticExecutionState,
+    call_depth: usize,
+) -> Result<RegisterValue, LlvmError> {
+    let RegisterValue::Function {
+        call, environment, ..
+    } = callee.clone()
+    else {
+        return Err(imported_error("static accessor is not callable"));
+    };
+    let definition = unit
+        .functions
+        .get(call.index())
+        .ok_or_else(|| imported_error(format!("static accessor references missing f{}", call.0)))?;
+    let body = lower_function(
+        unit,
+        definition,
+        functions,
+        call_arities,
+        Some(arguments),
+        environment,
+        Some(receiver),
+        Some(callee),
+        state,
+        call_depth + 1,
+    )?;
+    if !body.writes.is_empty() {
+        return Err(imported_error(
+            "static accessor performs an output side effect",
+        ));
+    }
+    if body.abrupt.is_some() {
+        return Err(imported_error("static accessor completes abruptly"));
+    }
+    Ok(body.result.unwrap_or(RegisterValue::Undefined))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_static_property_read(
+    unit: &OwnedVisitorUnit,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
+    call_arities: &BTreeMap<FunctionId, usize>,
+    value: RegisterValue,
+    receiver: RegisterValue,
+    state: &mut StaticExecutionState,
+    call_depth: usize,
+) -> Result<RegisterValue, LlvmError> {
+    match value {
+        RegisterValue::AccessorGetter(getter) => execute_static_accessor(
+            unit,
+            functions,
+            call_arities,
+            *getter,
+            receiver,
+            &[],
+            state,
+            call_depth,
+        ),
+        value => Ok(value),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_static_property_assignment(
+    unit: &OwnedVisitorUnit,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
+    call_arities: &BTreeMap<FunctionId, usize>,
+    assignment: StaticPropertyAssignment,
+    receiver: RegisterValue,
+    value: RegisterValue,
+    state: &mut StaticExecutionState,
+    call_depth: usize,
+) -> Result<(), LlvmError> {
+    if let StaticPropertyAssignment::CallSetter(setter) = assignment {
+        execute_static_accessor(
+            unit,
+            functions,
+            call_arities,
+            setter,
+            receiver,
+            &[value],
+            state,
+            call_depth,
+        )?;
+    }
+    Ok(())
 }
 
 fn static_exception_target(
@@ -3193,11 +3525,11 @@ fn static_get_own_property(
     })?;
     let value = match (entry, key) {
         (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Name(name)) => {
-            properties.get(&name).map(|property| property.value.clone())
+            properties.get(&name).map(StaticProperty::read)
         }
         (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Index(index)) => properties
             .get(index.to_string().as_str())
-            .map(|property| property.value.clone()),
+            .map(StaticProperty::read),
         (StaticHeapEntry::Array { length, .. }, StaticPropertyKey::Name(name))
             if name.as_ref() == "length" =>
         {
@@ -3206,18 +3538,18 @@ fn static_get_own_property(
             ))))
         }
         (StaticHeapEntry::Array { properties, .. }, StaticPropertyKey::Name(name)) => {
-            properties.get(&name).map(|property| property.value.clone())
+            properties.get(&name).map(StaticProperty::read)
         }
         (StaticHeapEntry::Array { elements, .. }, StaticPropertyKey::Index(index)) => {
-            elements.get(&index).map(|property| property.value.clone())
+            elements.get(&index).map(StaticProperty::read)
         }
         (StaticHeapEntry::Function { properties, .. }, StaticPropertyKey::Name(name)) => {
-            properties.get(&name).map(|property| property.value.clone())
+            properties.get(&name).map(StaticProperty::read)
         }
         (StaticHeapEntry::Function { properties, .. }, StaticPropertyKey::Index(index)) => {
             properties
                 .get(index.to_string().as_str())
-                .map(|property| property.value.clone())
+                .map(StaticProperty::read)
         }
     };
     Ok(value.unwrap_or(RegisterValue::Undefined))
@@ -3408,6 +3740,15 @@ fn static_lookup_property(
     key: &StaticPropertyKey,
     depth: usize,
 ) -> Result<Option<RegisterValue>, LlvmError> {
+    Ok(static_lookup_property_descriptor(heap, id, key, depth)?.map(|property| property.read()))
+}
+
+fn static_lookup_property_descriptor(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    id: u32,
+    key: &StaticPropertyKey,
+    depth: usize,
+) -> Result<Option<StaticProperty>, LlvmError> {
     if depth > 64 {
         return Err(imported_error("static prototype chain exceeds 64 objects"));
     }
@@ -3422,10 +3763,7 @@ fn static_lookup_property(
                 ..
             },
             StaticPropertyKey::Name(name),
-        ) => (
-            properties.get(name).map(|property| property.value.clone()),
-            *prototype,
-        ),
+        ) => (properties.get(name).cloned(), *prototype),
         (
             StaticHeapEntry::Object {
                 properties,
@@ -3434,17 +3772,21 @@ fn static_lookup_property(
             },
             StaticPropertyKey::Index(index),
         ) => (
-            properties
-                .get(index.to_string().as_str())
-                .map(|property| property.value.clone()),
+            properties.get(index.to_string().as_str()).cloned(),
             *prototype,
         ),
         (StaticHeapEntry::Array { length, .. }, StaticPropertyKey::Name(name))
             if name.as_ref() == "length" =>
         {
-            return Ok(Some(RegisterValue::Scalar(ScalarExpression::Integer(
-                i64::from(*length),
-            ))));
+            return Ok(Some(StaticProperty {
+                value: RegisterValue::Scalar(ScalarExpression::Integer(i64::from(*length))),
+                getter: None,
+                setter: None,
+                is_accessor: false,
+                writable: true,
+                enumerable: false,
+                configurable: false,
+            }));
         }
         (
             StaticHeapEntry::Array {
@@ -3453,10 +3795,7 @@ fn static_lookup_property(
                 ..
             },
             StaticPropertyKey::Name(name),
-        ) => (
-            properties.get(name).map(|property| property.value.clone()),
-            *prototype,
-        ),
+        ) => (properties.get(name).cloned(), *prototype),
         (
             StaticHeapEntry::Array {
                 elements,
@@ -3464,27 +3803,53 @@ fn static_lookup_property(
                 ..
             },
             StaticPropertyKey::Index(index),
-        ) => (
-            elements.get(index).map(|property| property.value.clone()),
-            *prototype,
-        ),
-        (StaticHeapEntry::Function { properties, .. }, StaticPropertyKey::Name(name)) => (
-            properties.get(name).map(|property| property.value.clone()),
-            None,
-        ),
-        (StaticHeapEntry::Function { properties, .. }, StaticPropertyKey::Index(index)) => (
-            properties
-                .get(index.to_string().as_str())
-                .map(|property| property.value.clone()),
-            None,
-        ),
+        ) => (elements.get(index).cloned(), *prototype),
+        (StaticHeapEntry::Function { properties, .. }, StaticPropertyKey::Name(name)) => {
+            (properties.get(name).cloned(), None)
+        }
+        (StaticHeapEntry::Function { properties, .. }, StaticPropertyKey::Index(index)) => {
+            (properties.get(index.to_string().as_str()).cloned(), None)
+        }
     };
     if value.is_some() {
         return Ok(value);
     }
     prototype.map_or(Ok(None), |prototype| {
-        static_lookup_property(heap, prototype, key, depth + 1)
+        static_lookup_property_descriptor(heap, prototype, key, depth + 1)
     })
+}
+
+enum StaticPropertyAssignment {
+    Stored,
+    CallSetter(RegisterValue),
+}
+
+enum StaticAccessorUpdate {
+    Preserve,
+    Set(Option<RegisterValue>),
+}
+
+fn static_set_property(
+    heap: &mut BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    key: StaticPropertyKey,
+    value: RegisterValue,
+) -> Result<StaticPropertyAssignment, LlvmError> {
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
+        _ => return Err(imported_error("property write base is not a static object")),
+    };
+    if let Some(property) = static_lookup_property_descriptor(heap, id, &key, 0)?
+        && property.is_accessor
+    {
+        return property
+            .setter
+            .map(StaticPropertyAssignment::CallSetter)
+            .ok_or_else(|| imported_error("static accessor property has no setter"));
+    }
+    static_put_property(heap, base, key, value)?;
+    Ok(StaticPropertyAssignment::Stored)
 }
 
 fn static_error_name(kind: u32) -> &'static str {
@@ -3633,6 +3998,166 @@ fn static_assign_property(
     Ok(())
 }
 
+fn static_accessor_value(value: RegisterValue) -> Result<Option<RegisterValue>, LlvmError> {
+    match value {
+        RegisterValue::Function { .. } => Ok(Some(value)),
+        RegisterValue::Undefined => Ok(None),
+        _ => Err(imported_error(
+            "accessor is neither a function nor undefined",
+        )),
+    }
+}
+
+fn static_put_accessor(
+    heap: &mut BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    key: StaticPropertyKey,
+    attributes: u64,
+    getter: StaticAccessorUpdate,
+    setter: StaticAccessorUpdate,
+) -> Result<(), LlvmError> {
+    const READ_ONLY: u64 = 1;
+    const DONT_ENUM: u64 = 1 << 1;
+    const DONT_DELETE: u64 = 1 << 2;
+    const ACCESSOR: u64 = 1 << 4;
+    if attributes & ACCESSOR == 0
+        || attributes & !(READ_ONLY | DONT_ENUM | DONT_DELETE | ACCESSOR) != 0
+    {
+        return Err(imported_error(format!(
+            "unsupported accessor property attributes 0x{attributes:x}"
+        )));
+    }
+    let enumerable = attributes & DONT_ENUM == 0;
+    let configurable = attributes & DONT_DELETE == 0;
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
+        _ => {
+            return Err(imported_error(
+                "accessor definition base is not a static object",
+            ));
+        }
+    };
+    let entry = heap.get_mut(&id).ok_or_else(|| {
+        imported_error("accessor definition references a missing static heap entry")
+    })?;
+    let update = |existing: Option<&mut StaticProperty>| -> Result<StaticProperty, LlvmError> {
+        if let Some(existing) = existing {
+            if !existing.configurable
+                && (!existing.is_accessor || existing.enumerable != enumerable)
+            {
+                return Err(imported_error(
+                    "invalid redefinition of a non-configurable static accessor",
+                ));
+            }
+            let existing_getter = existing
+                .is_accessor
+                .then(|| existing.getter.clone())
+                .flatten();
+            let existing_setter = existing
+                .is_accessor
+                .then(|| existing.setter.clone())
+                .flatten();
+            let getter = match &getter {
+                StaticAccessorUpdate::Preserve => existing_getter,
+                StaticAccessorUpdate::Set(value) => value.clone(),
+            };
+            let setter = match &setter {
+                StaticAccessorUpdate::Preserve => existing_setter,
+                StaticAccessorUpdate::Set(value) => value.clone(),
+            };
+            return Ok(StaticProperty::accessor(
+                getter,
+                setter,
+                enumerable,
+                existing.configurable && configurable,
+            ));
+        }
+        let getter = match &getter {
+            StaticAccessorUpdate::Preserve => None,
+            StaticAccessorUpdate::Set(value) => value.clone(),
+        };
+        let setter = match &setter {
+            StaticAccessorUpdate::Preserve => None,
+            StaticAccessorUpdate::Set(value) => value.clone(),
+        };
+        Ok(StaticProperty::accessor(
+            getter,
+            setter,
+            enumerable,
+            configurable,
+        ))
+    };
+    match (entry, key) {
+        (
+            StaticHeapEntry::Object {
+                properties,
+                property_order,
+                ..
+            }
+            | StaticHeapEntry::Function {
+                properties,
+                property_order,
+                ..
+            },
+            StaticPropertyKey::Name(name),
+        ) => {
+            let is_new = !properties.contains_key(&name);
+            let property = update(properties.get_mut(&name))?;
+            if is_new {
+                property_order.push(name.clone());
+            }
+            properties.insert(name, property);
+        }
+        (
+            StaticHeapEntry::Object {
+                properties,
+                property_order,
+                ..
+            }
+            | StaticHeapEntry::Function {
+                properties,
+                property_order,
+                ..
+            },
+            StaticPropertyKey::Index(index),
+        ) => {
+            let name = index.to_string().into_boxed_str();
+            let is_new = !properties.contains_key(&name);
+            let property = update(properties.get_mut(&name))?;
+            if is_new {
+                property_order.push(name.clone());
+            }
+            properties.insert(name, property);
+        }
+        (StaticHeapEntry::Array { elements, .. }, StaticPropertyKey::Index(index)) => {
+            let property = update(elements.get_mut(&index))?;
+            elements.insert(index, property);
+        }
+        (StaticHeapEntry::Array { .. }, StaticPropertyKey::Name(name))
+            if name.as_ref() == "length" =>
+        {
+            return Err(imported_error("array length cannot become an accessor"));
+        }
+        (
+            StaticHeapEntry::Array {
+                properties,
+                property_order,
+                ..
+            },
+            StaticPropertyKey::Name(name),
+        ) => {
+            let is_new = !properties.contains_key(&name);
+            let property = update(properties.get_mut(&name))?;
+            if is_new {
+                property_order.push(name.clone());
+            }
+            properties.insert(name, property);
+        }
+    }
+    Ok(())
+}
+
 fn static_define_data_property(
     heap: &mut BTreeMap<u32, StaticHeapEntry>,
     base: &RegisterValue,
@@ -3677,6 +4202,9 @@ fn static_define_data_property(
                 }
             }
             existing.value = value;
+            existing.getter = None;
+            existing.setter = None;
+            existing.is_accessor = false;
             if let Some(configurable) = attributes.configurable {
                 existing.configurable = configurable;
             }
@@ -3692,6 +4220,9 @@ fn static_define_data_property(
                 name,
                 StaticProperty {
                     value,
+                    getter: None,
+                    setter: None,
+                    is_accessor: false,
                     configurable: attributes.configurable.unwrap_or(false),
                     enumerable: attributes.enumerable.unwrap_or(false),
                     writable: attributes.writable.unwrap_or(false),
@@ -3752,6 +4283,9 @@ fn static_define_data_property(
                     ));
                 }
                 existing.value = value;
+                existing.getter = None;
+                existing.setter = None;
+                existing.is_accessor = false;
                 if let Some(configurable) = attributes.configurable {
                     existing.configurable = configurable;
                 }
@@ -3766,6 +4300,9 @@ fn static_define_data_property(
                     index,
                     StaticProperty {
                         value,
+                        getter: None,
+                        setter: None,
+                        is_accessor: false,
                         configurable: attributes.configurable.unwrap_or(false),
                         enumerable: attributes.enumerable.unwrap_or(false),
                         writable: attributes.writable.unwrap_or(false),

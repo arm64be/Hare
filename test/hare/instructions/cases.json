@@ -994,5 +994,54 @@
     ],
     "verified_opcodes": [],
     "source": "class H026PrivateMethod { #value() { return 42; } getValue() { return this.#value(); } hasValue(object) { return #value in object; } } const h026PrivateMethod = new H026PrivateMethod(); console.log(h026PrivateMethod.getValue()); console.log(h026PrivateMethod.hasValue(h026PrivateMethod)); console.log(h026PrivateMethod.hasValue({}));"
+  },
+  {
+    "id": "object.computed-accessors",
+    "family": "object_property",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_new_object",
+      "op_new_func_exp",
+      "op_put_getter_by_id",
+      "op_put_setter_by_id",
+      "op_to_property_key",
+      "op_set_function_name",
+      "op_put_getter_by_val",
+      "op_put_setter_by_val",
+      "op_put_by_id",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call_ignore_result",
+      "op_ret",
+      "op_to_this",
+      "op_add"
+    ],
+    "verified_opcodes": [],
+    "source": "const h026Accessors = { get value() { return this.stored + 2; }, set value(input) { this.stored = input; }, get [\"other\"]() { return this.stored + 3; }, set [\"other\"](input) { this.stored = input + 1; } }; h026Accessors.value = 40; console.log(h026Accessors.value); h026Accessors[\"other\"] = 38; console.log(h026Accessors[\"other\"]);"
+  },
+  {
+    "id": "object.paired-accessor",
+    "family": "object_property",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_new_object",
+      "op_new_func_exp",
+      "op_put_getter_setter_by_id",
+      "op_put_by_id",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call_ignore_result",
+      "op_ret",
+      "op_to_this",
+      "op_add"
+    ],
+    "verified_opcodes": [],
+    "source": "const h026AccessorPair = { get value() { return this.stored + 2; }, set value(input) { this.stored = input; } }; h026AccessorPair.value = 40; console.log(h026AccessorPair.value);"
   }
 ]
