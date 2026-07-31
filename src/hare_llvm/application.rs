@@ -63,7 +63,7 @@ struct StaticFunction {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum StaticValue {
+pub(super) enum StaticValue {
     Number(f64),
     String(Box<str>),
     Boolean(bool),
@@ -194,6 +194,16 @@ pub fn compile_static_application(
         target,
         stdout: stdout.into_boxed_slice(),
     })
+}
+
+pub(super) fn evaluate_static_expression(source: &[u8]) -> Result<StaticValue, LlvmError> {
+    let tokens = Lexer::new(source).lex()?;
+    let mut parser = Parser::new(tokens);
+    let expression = parser.parse_expression()?;
+    if !matches!(parser.current().kind, TokenKind::Eof) {
+        return parser.error("unexpected token after static expression");
+    }
+    parser.evaluate(&expression, &BTreeMap::new(), 0)
 }
 
 struct Lexer<'a> {

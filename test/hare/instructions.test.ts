@@ -200,6 +200,9 @@ test.skipIf(!isLinux)(
       function
       42
       function
+      42
+      42
+      SyntaxError
       "
     `);
     expect(referenceExitCode).toBe(0);
@@ -241,8 +244,15 @@ test.skipIf(!isLinux)(
           : compileLines
               .slice(failedFunctionStart, failedFunctionEnd === -1 ? undefined : failedFunctionEnd)
               .join("\n");
-      expect({ compileError, failedFunctionDump }).toEqual({ compileError: undefined, failedFunctionDump: "" });
+      const compileFailureTail = compileExitCode === 0 ? "" : compileLines.slice(-24).join("\n");
+      expect({ compileError, failedFunctionDump, compileExitCode, compileFailureTail }).toEqual({
+        compileError: undefined,
+        failedFunctionDump: "",
+        compileExitCode: 0,
+        compileFailureTail: "",
+      });
       expect(compileStderr).toContain("hare-dump schema=1");
+      expect(compileStderr).toContain(`hare-lowering route=${lowering === "imported" ? "imported-bytecode" : lowering}`);
       expect(compileStderr).toContain("structurally_complete=true");
       expect(compileStderr).toMatch(/simple-switch t\d+ minimum=2147483647 default=-?\d+ list=true offsets=/);
       const claimedOpcodes = new Set(
@@ -256,7 +266,6 @@ test.skipIf(!isLinux)(
       expect([...claimedOpcodes].filter(opcode => !dumpedOpcodes.has(opcode)).sort()).toEqual([]);
       expect([...dumpedOpcodes].filter(opcode => !claimedOpcodes.has(opcode)).sort()).toEqual([]);
       expect(readHareGraphFlags(executable) & (1 << 4)).toBe(1 << 4);
-      expect(compileExitCode).toBe(0);
 
       await using native = Bun.spawn({
         cmd: [executable],

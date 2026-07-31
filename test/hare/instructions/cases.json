@@ -1229,5 +1229,32 @@
     ],
     "verified_opcodes": [],
     "source": "let h026IteratorTotal = 0; for (const value of [40, 2]) { h026IteratorTotal += value; } console.log(h026IteratorTotal); async function h026AsyncIteration(values) { let total = 0; for await (const value of values) { total += value; } return total; } console.log(typeof h026AsyncIteration);"
+  },
+  {
+    "id": "module.literal-direct-eval",
+    "family": "module_eval",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_new_func_exp",
+      "op_put_to_scope",
+      "op_get_from_scope",
+      "op_call",
+      "op_ret",
+      "op_create_lexical_environment",
+      "op_resolve_scope",
+      "op_jtrue",
+      "op_new_object",
+      "op_put_by_id",
+      "op_get_by_id",
+      "op_call_ignore_result",
+      "op_create_cloned_arguments",
+      "op_to_this",
+      "op_call_direct_eval",
+      "op_create_this"
+    ],
+    "verified_opcodes": [],
+    "source": "console.log(eval(\"40 + 2\")); console.log(eval(42)); try { eval(\"40 +\"); } catch (error) { console.log(error.name); }"
   }
 ]

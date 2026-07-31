@@ -1438,11 +1438,13 @@ pub mod bv2_impl {
                 })?;
                 eprintln!("{dump}");
             }
-            let llvm_ir = match hare_llvm::compile_imported_scalar_application(unit, target) {
-                Ok(llvm_ir) => llvm_ir,
+            let (llvm_ir, lowering_route) = match hare_llvm::compile_imported_scalar_application(
+                unit, target,
+            ) {
+                Ok(llvm_ir) => (llvm_ir, "imported-bytecode"),
                 Err(imported @ hare_llvm::LlvmError::ImportedApplication(_)) => {
                     match hare_llvm::compile_static_application(source, target) {
-                        Ok(application) => application.emit_llvm_ir(),
+                        Ok(application) => (application.emit_llvm_ir(), "source-transition"),
                         Err(source_error) => {
                             return Err(hare_llvm::LlvmError::ImportedApplication(
                                 format!(
@@ -1455,6 +1457,9 @@ pub mod bv2_impl {
                 }
                 Err(error) => return Err(error),
             };
+            if std::env::var_os("BUN_DEBUG_HARE_IR").is_some() {
+                eprintln!("hare-lowering route={lowering_route}");
+            }
             Ok(llvm_ir.into_bytes().into_boxed_slice())
         }
 

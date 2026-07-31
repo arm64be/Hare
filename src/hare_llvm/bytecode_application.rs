@@ -58,10 +58,19 @@ enum Builtin {
     Array,
     CreatePrivateSymbol,
     EmptyPropertyNameEnumerator,
+    Eval,
     HasOwnPropertyFunction,
     Object,
     SentinelString,
     SetPrototypeDirectOrThrow,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InternalObjectKind {
+    Generator,
+    AsyncGenerator,
+    AsyncFunctionGenerator,
+    Promise,
 }
 
 fn builtin_is_callable(builtin: Builtin) -> bool {
@@ -69,6 +78,7 @@ fn builtin_is_callable(builtin: Builtin) -> bool {
         builtin,
         Builtin::Array
             | Builtin::CreatePrivateSymbol
+            | Builtin::Eval
             | Builtin::HasOwnPropertyFunction
             | Builtin::Object
             | Builtin::SetPrototypeDirectOrThrow
@@ -92,6 +102,7 @@ type StaticEnvironmentRef = Rc<RefCell<StaticEnvironment>>;
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StaticEnvironment {
     parent: Option<StaticEnvironmentRef>,
+    object_scope: Option<RegisterValue>,
     bindings: BTreeMap<Box<str>, RegisterValue>,
 }
 
@@ -124,6 +135,7 @@ enum RegisterValue {
     AccessorGetter(Box<Self>),
     ArrayTemplate(Vec<Self>),
     Environment(StaticEnvironmentRef),
+    GlobalObject,
     ConsoleScope,
     NaNScope,
     InfinityScope,
@@ -137,7 +149,7 @@ enum RegisterValue {
         heap_id: u32,
         keys: Vec<Box<str>>,
     },
-    Arguments(Vec<Self>),
+    Arguments(Rc<RefCell<Vec<Self>>>),
     ExceptionObject(Box<Self>),
     Error {
         kind: u32,
@@ -150,6 +162,11 @@ enum RegisterValue {
     ArrayIterator {
         array_id: u32,
         next_index: Rc<Cell<u32>>,
+    },
+    InternalObject {
+        identity: u32,
+        kind: InternalObjectKind,
+        fields: Rc<RefCell<BTreeMap<u32, Self>>>,
     },
     Spread(Vec<Self>),
     Empty,
@@ -247,6 +264,7 @@ struct StaticExecutionState {
     heap: BTreeMap<u32, StaticHeapEntry>,
     next_heap_id: u32,
     next_function_identity: u32,
+    next_internal_object_identity: u32,
     next_private_name_identity: u32,
 }
 
@@ -277,6 +295,15 @@ impl StaticExecutionState {
             .ok_or_else(|| imported_error("private-name identity overflow"))?;
         Ok(identity)
     }
+
+    fn allocate_internal_object_identity(&mut self) -> Result<u32, LlvmError> {
+        let identity = self.next_internal_object_identity;
+        self.next_internal_object_identity = self
+            .next_internal_object_identity
+            .checked_add(1)
+            .ok_or_else(|| imported_error("internal-object identity overflow"))?;
+        Ok(identity)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -291,6 +318,14 @@ struct StaticDefinePropertyAttributes {
     enumerable: Option<bool>,
     writable: Option<bool>,
     has_value: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StaticDefineAccessorAttributes {
+    configurable: Option<bool>,
+    enumerable: Option<bool>,
+    has_get: bool,
+    has_set: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -492,12 +527,25 @@ fn lower_function(
         return Err(imported_error("static call depth exceeds 64"));
     }
     let mut registers = BTreeMap::new();
-    registers.insert(
-        function.scope_register as i64,
-        explicit_environment
-            .map(RegisterValue::Environment)
-            .unwrap_or(RegisterValue::Opaque),
-    );
+    let first_var = -i64::from(function.num_vars);
+    let scope_register = i64::from(function.scope_register);
+    if first_var > scope_register {
+        return Err(imported_error(format!(
+            "f{} has an invalid numVars/scope-register layout",
+            function.id.0
+        )));
+    }
+    for register in first_var..scope_register {
+        registers.insert(register, RegisterValue::Undefined);
+    }
+    let environment = explicit_environment.unwrap_or_else(|| {
+        Rc::new(RefCell::new(StaticEnvironment {
+            parent: None,
+            object_scope: None,
+            bindings: BTreeMap::new(),
+        }))
+    });
+    registers.insert(scope_register, RegisterValue::Environment(environment));
     let this_value = explicit_this.unwrap_or(RegisterValue::Undefined);
     registers.insert(function.this_register as i64, this_value.clone());
     registers.insert(
@@ -741,6 +789,42 @@ fn lower_function(
                 );
                 registers.insert(destination, RegisterValue::Object(id));
             }
+            "op_create_generator"
+            | "op_create_async_generator"
+            | "op_create_promise"
+            | "op_new_generator"
+            | "op_new_async_function_generator"
+            | "op_new_promise" => {
+                let destination = signed_operand(instruction, "dst")?;
+                if matches!(
+                    descriptor.opcode,
+                    "op_create_generator" | "op_create_async_generator" | "op_create_promise"
+                ) {
+                    let callee = read_register(
+                        function,
+                        &registers,
+                        signed_operand(instruction, "callee")?,
+                    )?;
+                    if !matches!(callee, RegisterValue::Function { .. }) {
+                        return Err(unsupported(function, instruction, descriptor.opcode));
+                    }
+                }
+                let kind = match descriptor.opcode {
+                    "op_create_generator" | "op_new_generator" => InternalObjectKind::Generator,
+                    "op_create_async_generator" => InternalObjectKind::AsyncGenerator,
+                    "op_new_async_function_generator" => InternalObjectKind::AsyncFunctionGenerator,
+                    "op_create_promise" | "op_new_promise" => InternalObjectKind::Promise,
+                    _ => unreachable!(),
+                };
+                registers.insert(
+                    destination,
+                    RegisterValue::InternalObject {
+                        identity: state.allocate_internal_object_identity()?,
+                        kind,
+                        fields: Rc::new(RefCell::new(BTreeMap::new())),
+                    },
+                );
+            }
             "op_create_this" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let callee =
@@ -793,7 +877,7 @@ fn lower_function(
                 let destination = signed_operand(instruction, "dst")?;
                 registers.insert(
                     destination,
-                    RegisterValue::Arguments(parameter_values.clone()),
+                    RegisterValue::Arguments(Rc::new(RefCell::new(parameter_values.clone()))),
                 );
             }
             "op_argument_count" => {
@@ -833,13 +917,31 @@ fn lower_function(
                 };
                 let index = usize::try_from(unsigned_operand(instruction, "index")?)
                     .map_err(|_| imported_error("argument index exceeds usize"))?;
-                registers.insert(
-                    destination,
-                    values
-                        .get(index)
-                        .cloned()
-                        .unwrap_or(RegisterValue::Undefined),
-                );
+                let value = values
+                    .borrow()
+                    .get(index)
+                    .cloned()
+                    .unwrap_or(RegisterValue::Undefined);
+                registers.insert(destination, value);
+            }
+            "op_put_to_arguments" => {
+                let arguments = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "arguments")?,
+                )?;
+                let RegisterValue::Arguments(values) = arguments else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let index = usize::try_from(unsigned_operand(instruction, "index")?)
+                    .map_err(|_| imported_error("argument index exceeds usize"))?;
+                let value =
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                let mut values = values.borrow_mut();
+                if index >= values.len() {
+                    values.resize(index + 1, RegisterValue::Undefined);
+                }
+                values[index] = value;
             }
             "op_new_array_buffer" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -920,6 +1022,45 @@ fn lower_function(
                 }
                 let length = u32::try_from(evaluate(&length, functions, &[], 0)?)
                     .map_err(|_| unsupported(function, instruction, descriptor.opcode))?;
+                let id = state.allocate_heap_id()?;
+                state.heap.insert(
+                    id,
+                    StaticHeapEntry::Array {
+                        prototype: None,
+                        elements: BTreeMap::new(),
+                        properties: BTreeMap::new(),
+                        property_order: Vec::new(),
+                        length,
+                        private_properties: BTreeMap::new(),
+                        private_brands: BTreeSet::new(),
+                    },
+                );
+                registers.insert(destination, RegisterValue::Array(id));
+            }
+            "op_new_array_with_species" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let length =
+                    scalar_register(function, &registers, signed_operand(instruction, "length")?)?;
+                if !expression_is_closed(&length) {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                }
+                let length = u32::try_from(evaluate(&length, functions, &[], 0)?)
+                    .map_err(|_| unsupported(function, instruction, descriptor.opcode))?;
+                let array =
+                    read_register(function, &registers, signed_operand(instruction, "array")?)?;
+                let RegisterValue::Array(_) = array else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let constructor = static_get_own_property(
+                    &state.heap,
+                    &array,
+                    StaticPropertyKey::Name("constructor".into()),
+                )?;
+                if !matches!(constructor, RegisterValue::Undefined) {
+                    return Err(imported_error(
+                        "custom Array species construction is not statically admitted",
+                    ));
+                }
                 let id = state.allocate_heap_id()?;
                 state.heap.insert(
                     id,
@@ -1154,6 +1295,72 @@ fn lower_function(
                 )?;
                 let attributes = static_define_property_attributes(&attributes, functions)?;
                 static_define_data_property(&mut state.heap, &base, property, value, attributes)?;
+            }
+            "op_define_accessor_property" => {
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "property")?,
+                )?;
+                let property = static_property_key(&property, functions)?;
+                let getter =
+                    read_register(function, &registers, signed_operand(instruction, "getter")?)?;
+                let setter =
+                    read_register(function, &registers, signed_operand(instruction, "setter")?)?;
+                let attributes = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "attributes")?,
+                )?;
+                let attributes = static_define_accessor_attributes(&attributes, functions)?;
+                let getter = attributes
+                    .has_get
+                    .then(|| static_accessor_value(getter))
+                    .transpose()?
+                    .flatten();
+                let setter = attributes
+                    .has_set
+                    .then(|| static_accessor_value(setter))
+                    .transpose()?
+                    .flatten();
+                static_define_accessor_property(
+                    &mut state.heap,
+                    &base,
+                    property,
+                    getter,
+                    setter,
+                    attributes,
+                )?;
+            }
+            "op_get_internal_field" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let index = u32::try_from(unsigned_operand(instruction, "index")?)
+                    .map_err(|_| imported_error("internal-field index exceeds u32"))?;
+                let RegisterValue::InternalObject { fields, .. } = base else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let value = fields
+                    .borrow()
+                    .get(&index)
+                    .cloned()
+                    .unwrap_or(RegisterValue::Undefined);
+                registers.insert(destination, value);
+            }
+            "op_put_internal_field" => {
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let index = u32::try_from(unsigned_operand(instruction, "index")?)
+                    .map_err(|_| imported_error("internal-field index exceeds u32"))?;
+                let value =
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                let RegisterValue::InternalObject { fields, .. } = base else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                fields.borrow_mut().insert(index, value);
             }
             "op_put_getter_by_id" | "op_put_setter_by_id" => {
                 let base =
@@ -1473,6 +1680,41 @@ fn lower_function(
                     destination,
                     RegisterValue::Environment(Rc::new(RefCell::new(StaticEnvironment {
                         parent,
+                        object_scope: None,
+                        bindings: BTreeMap::new(),
+                    }))),
+                );
+            }
+            "op_push_with_scope" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let current_scope = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "currentScope")?,
+                )?;
+                let new_scope = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "newScope")?,
+                )?;
+                let parent = match current_scope {
+                    RegisterValue::Environment(environment) => Some(environment),
+                    RegisterValue::Opaque => None,
+                    _ => return Err(unsupported(function, instruction, descriptor.opcode)),
+                };
+                if !matches!(
+                    new_scope,
+                    RegisterValue::Object(_)
+                        | RegisterValue::Array(_)
+                        | RegisterValue::Function { .. }
+                ) {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                }
+                registers.insert(
+                    destination,
+                    RegisterValue::Environment(Rc::new(RefCell::new(StaticEnvironment {
+                        parent,
+                        object_scope: Some(new_scope),
                         bindings: BTreeMap::new(),
                     }))),
                 );
@@ -1487,7 +1729,27 @@ fn lower_function(
                     identifier_string(function, unsigned_operand(instruction, "var")?)?;
                 let value =
                     read_register(function, &registers, signed_operand(instruction, "value")?)?;
-                environment.borrow_mut().bindings.insert(identifier, value);
+                let object_scope = environment.borrow().object_scope.clone();
+                if let Some(object_scope) = object_scope {
+                    let assignment = static_set_property(
+                        &mut state.heap,
+                        &object_scope,
+                        StaticPropertyKey::Name(identifier),
+                        value.clone(),
+                    )?;
+                    apply_static_property_assignment(
+                        unit,
+                        functions,
+                        call_arities,
+                        assignment,
+                        object_scope,
+                        value,
+                        state,
+                        call_depth,
+                    )?;
+                } else {
+                    environment.borrow_mut().bindings.insert(identifier, value);
+                }
             }
             "op_get_scope" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -1517,7 +1779,8 @@ fn lower_function(
                     read_register(function, &registers, signed_operand(instruction, "scope")?)?;
                 let identifier_text = identifier_string(function, identifier)?;
                 if let RegisterValue::Environment(environment) = &scope
-                    && let Some(resolved) = resolve_environment(environment, &identifier_text)
+                    && let Some(resolved) =
+                        resolve_environment(&state.heap, environment, &identifier_text)?
                 {
                     registers.insert(destination, RegisterValue::Environment(resolved));
                 } else if identifier_is(function, identifier, b"console")? {
@@ -1534,13 +1797,45 @@ fn lower_function(
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
             }
+            "op_resolve_scope_for_hoisting_func_decl_in_eval" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let scope =
+                    read_register(function, &registers, signed_operand(instruction, "scope")?)?;
+                let _property =
+                    identifier_string(function, unsigned_operand(instruction, "property")?)?;
+                let RegisterValue::Environment(mut current) = scope else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let mut resolved = None;
+                loop {
+                    let borrowed = current.borrow();
+                    if borrowed.object_scope.is_none() {
+                        resolved = Some(current.clone());
+                    }
+                    let parent = borrowed.parent.clone();
+                    drop(borrowed);
+                    let Some(parent) = parent else {
+                        break;
+                    };
+                    current = parent;
+                }
+                registers.insert(
+                    destination,
+                    resolved
+                        .map(RegisterValue::Environment)
+                        .unwrap_or(RegisterValue::Undefined),
+                );
+            }
             "op_get_from_scope" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let scope = signed_operand(instruction, "scope")?;
                 let identifier = unsigned_operand(instruction, "var")?;
                 if let Some(RegisterValue::Environment(environment)) = registers.get(&scope)
-                    && let Some(value) =
-                        environment_binding(environment, &identifier_string(function, identifier)?)
+                    && let Some(value) = environment_binding(
+                        &state.heap,
+                        environment,
+                        &identifier_string(function, identifier)?,
+                    )?
                 {
                     registers.insert(destination, value);
                 } else if matches!(registers.get(&scope), Some(RegisterValue::ConsoleScope))
@@ -1638,7 +1933,7 @@ fn lower_function(
                     },
                     RegisterValue::String(value) => i64::try_from(value.encode_utf16().count())
                         .map_err(|_| imported_error("string length exceeds i64"))?,
-                    RegisterValue::Arguments(values) => i64::try_from(values.len())
+                    RegisterValue::Arguments(values) => i64::try_from(values.borrow().len())
                         .map_err(|_| imported_error("argument count exceeds i64"))?,
                     _ => return Err(unsupported(function, instruction, descriptor.opcode)),
                 };
@@ -2113,6 +2408,68 @@ fn lower_function(
                 }
                 registers.insert(destination, RegisterValue::Boolean(false));
             }
+            "op_has_structure_with_flags" => {
+                const DID_PREVENT_EXTENSIONS: u32 = 1 << 20;
+                const HAS_NON_CONFIGURABLE_PROPERTIES: u32 = 1 << 29;
+                const HAS_NON_CONFIGURABLE_READ_ONLY_OR_ACCESSOR_PROPERTIES: u32 = 1 << 30;
+
+                let destination = signed_operand(instruction, "dst")?;
+                let value = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "operand")?,
+                )?;
+                let flags = u32::try_from(unsigned_operand(instruction, "flags")?)
+                    .map_err(|_| imported_error("structure flags exceed u32"))?;
+                if flags
+                    & !(DID_PREVENT_EXTENSIONS
+                        | HAS_NON_CONFIGURABLE_PROPERTIES
+                        | HAS_NON_CONFIGURABLE_READ_ONLY_OR_ACCESSOR_PROPERTIES)
+                    != 0
+                {
+                    return Err(imported_error("unsupported JSC structure flag mask"));
+                }
+                let id = match value {
+                    RegisterValue::Object(id) | RegisterValue::Array(id) => id,
+                    RegisterValue::Function { heap_id, .. } => heap_id,
+                    _ => return Err(unsupported(function, instruction, descriptor.opcode)),
+                };
+                let entry = state.heap.get(&id).ok_or_else(|| {
+                    imported_error("structure-flag query references a missing static object")
+                })?;
+                let mut has_non_configurable = false;
+                let mut has_non_configurable_read_only_or_accessor = false;
+                let mut observe = |property: &StaticProperty| {
+                    if !property.configurable {
+                        has_non_configurable = true;
+                        if !property.writable || property.is_accessor {
+                            has_non_configurable_read_only_or_accessor = true;
+                        }
+                    }
+                };
+                match entry {
+                    StaticHeapEntry::Object { properties, .. }
+                    | StaticHeapEntry::Function { properties, .. } => {
+                        properties.values().for_each(&mut observe);
+                    }
+                    StaticHeapEntry::Array {
+                        elements,
+                        properties,
+                        ..
+                    } => {
+                        elements.values().for_each(&mut observe);
+                        properties.values().for_each(&mut observe);
+                    }
+                }
+                let mut actual = 0;
+                if has_non_configurable {
+                    actual |= HAS_NON_CONFIGURABLE_PROPERTIES;
+                }
+                if has_non_configurable_read_only_or_accessor {
+                    actual |= HAS_NON_CONFIGURABLE_READ_ONLY_OR_ACCESSOR_PROPERTIES;
+                }
+                registers.insert(destination, RegisterValue::Boolean(actual & flags != 0));
+            }
             "op_negate" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let source = scalar_register(
@@ -2268,20 +2625,139 @@ fn lower_function(
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
             }
-            "op_to_this" => {
-                let register = signed_operand(instruction, "srcDst")?;
-                let value = read_register(function, &registers, register)?;
-                let _ecma_mode = unsigned_operand(instruction, "ecmaMode")?;
-                if !matches!(
+            "op_to_object" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let value = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "operand")?,
+                )?;
+                let message = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "message")?,
+                )?;
+                if matches!(value, RegisterValue::Undefined | RegisterValue::Null) {
+                    let RegisterValue::String(message) = message else {
+                        return Err(unsupported(function, instruction, descriptor.opcode));
+                    };
+                    let thrown = RegisterValue::Error { kind: 5, message };
+                    if let Some(target) =
+                        static_exception_target(function, instruction, &instruction_indices)?
+                    {
+                        pending_exception = Some(thrown);
+                        instruction_index = target;
+                        continue;
+                    }
+                    abrupt = Some(thrown);
+                    break;
+                }
+                if matches!(
                     value,
                     RegisterValue::Function { .. }
                         | RegisterValue::RegExp { .. }
                         | RegisterValue::Object(_)
                         | RegisterValue::Array(_)
                         | RegisterValue::Arguments(_)
+                        | RegisterValue::InternalObject { .. }
+                        | RegisterValue::GlobalObject
                         | RegisterValue::ConsoleObject
                         | RegisterValue::Error { .. }
                 ) {
+                    registers.insert(destination, value);
+                } else {
+                    let mut properties = BTreeMap::new();
+                    let mut property_order = Vec::new();
+                    if let RegisterValue::String(text) = &value {
+                        if text.chars().count() != text.encode_utf16().count() {
+                            return Err(imported_error(
+                                "boxed strings containing surrogate pairs are not yet admitted",
+                            ));
+                        }
+                        for (index, character) in text.chars().enumerate() {
+                            let name = index.to_string().into_boxed_str();
+                            property_order.push(name.clone());
+                            properties.insert(
+                                name,
+                                StaticProperty {
+                                    value: RegisterValue::String(
+                                        character.to_string().into_boxed_str(),
+                                    ),
+                                    getter: None,
+                                    setter: None,
+                                    is_accessor: false,
+                                    writable: false,
+                                    enumerable: true,
+                                    configurable: false,
+                                },
+                            );
+                        }
+                        properties.insert(
+                            "length".into(),
+                            StaticProperty {
+                                value: RegisterValue::Scalar(ScalarExpression::Integer(
+                                    i64::try_from(text.encode_utf16().count()).map_err(|_| {
+                                        imported_error("boxed string length exceeds i64")
+                                    })?,
+                                )),
+                                getter: None,
+                                setter: None,
+                                is_accessor: false,
+                                writable: false,
+                                enumerable: false,
+                                configurable: false,
+                            },
+                        );
+                    } else if !is_admitted_primitive(&value) {
+                        return Err(unsupported(function, instruction, descriptor.opcode));
+                    }
+                    let id = state.allocate_heap_id()?;
+                    state.heap.insert(
+                        id,
+                        StaticHeapEntry::Object {
+                            prototype: None,
+                            properties,
+                            property_order,
+                            private_properties: BTreeMap::new(),
+                            private_brands: BTreeSet::new(),
+                        },
+                    );
+                    registers.insert(destination, RegisterValue::Object(id));
+                }
+            }
+            "op_to_this" => {
+                let register = signed_operand(instruction, "srcDst")?;
+                let value = read_register(function, &registers, register)?;
+                let ecma_mode = unsigned_operand(instruction, "ecmaMode")?;
+                if ecma_mode > 1 {
+                    return Err(imported_error("op_to_this has an invalid ECMAMode"));
+                }
+                let value = if matches!(value, RegisterValue::Environment(_)) {
+                    if ecma_mode == 0 {
+                        RegisterValue::Undefined
+                    } else {
+                        RegisterValue::GlobalObject
+                    }
+                } else if ecma_mode == 1
+                    && matches!(value, RegisterValue::Undefined | RegisterValue::Null)
+                {
+                    RegisterValue::GlobalObject
+                } else {
+                    value
+                };
+                let is_object = matches!(
+                    value,
+                    RegisterValue::Function { .. }
+                        | RegisterValue::RegExp { .. }
+                        | RegisterValue::Object(_)
+                        | RegisterValue::Array(_)
+                        | RegisterValue::Arguments(_)
+                        | RegisterValue::InternalObject { .. }
+                        | RegisterValue::GlobalObject
+                        | RegisterValue::ConsoleObject
+                        | RegisterValue::Error { .. }
+                );
+                if known_js_type(&value).is_none() || (ecma_mode == 1 && !is_object) {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
                 registers.insert(register, value);
@@ -2306,6 +2782,55 @@ fn lower_function(
                     values.push(value);
                 }
                 registers.insert(destination, RegisterValue::Concatenation(values));
+            }
+            "op_call_direct_eval" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let callee =
+                    read_register(function, &registers, signed_operand(instruction, "callee")?)?;
+                if !matches!(callee, RegisterValue::Builtin(Builtin::Eval)) {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                }
+                let _this_value = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "thisValue")?,
+                )?;
+                let _scope =
+                    read_register(function, &registers, signed_operand(instruction, "scope")?)?;
+                let _lexically_scoped_features =
+                    unsigned_operand(instruction, "lexicallyScopedFeatures")?;
+                let arguments = call_register_values(function, instruction, &registers)?;
+                let argument = arguments
+                    .first()
+                    .cloned()
+                    .unwrap_or(RegisterValue::Undefined);
+                let value = if let RegisterValue::String(source) = argument {
+                    match crate::application::evaluate_static_expression(source.as_bytes())
+                        .and_then(register_value_from_static_application)
+                    {
+                        Ok(value) => value,
+                        Err(error) => {
+                            let thrown = RegisterValue::Error {
+                                kind: 4,
+                                message: error.to_string().into_boxed_str(),
+                            };
+                            if let Some(target) = static_exception_target(
+                                function,
+                                instruction,
+                                &instruction_indices,
+                            )? {
+                                pending_exception = Some(thrown);
+                                instruction_index = target;
+                                continue;
+                            }
+                            abrupt = Some(thrown);
+                            break;
+                        }
+                    }
+                } else {
+                    argument
+                };
+                registers.insert(destination, value);
             }
             "op_call_varargs" | "op_tail_call_varargs" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -2347,9 +2872,7 @@ fn lower_function(
                     state,
                     call_depth + 1,
                 )?;
-                if !body.writes.is_empty() {
-                    return Err(unsupported(function, instruction, descriptor.opcode));
-                }
+                writes.extend(body.writes);
                 if let Some(thrown) = body.abrupt {
                     if let Some(target) =
                         static_exception_target(function, instruction, &instruction_indices)?
@@ -2411,9 +2934,7 @@ fn lower_function(
                     state,
                     call_depth + 1,
                 )?;
-                if !body.writes.is_empty() {
-                    return Err(unsupported(function, instruction, descriptor.opcode));
-                }
+                writes.extend(body.writes);
                 if let Some(thrown) = body.abrupt {
                     if let Some(target) =
                         static_exception_target(function, instruction, &instruction_indices)?
@@ -2505,9 +3026,7 @@ fn lower_function(
                         state,
                         call_depth + 1,
                     )?;
-                    if !body.writes.is_empty() {
-                        return Err(unsupported(function, instruction, descriptor.opcode));
-                    }
+                    writes.extend(body.writes);
                     if let Some(thrown) = body.abrupt {
                         if let Some(target) =
                             static_exception_target(function, instruction, &instruction_indices)?
@@ -2563,9 +3082,7 @@ fn lower_function(
                     state,
                     call_depth + 1,
                 )?;
-                if !body.writes.is_empty() {
-                    return Err(unsupported(function, instruction, descriptor.opcode));
-                }
+                writes.extend(body.writes);
                 if let Some(thrown) = body.abrupt {
                     if let Some(target) =
                         static_exception_target(function, instruction, &instruction_indices)?
@@ -2627,9 +3144,7 @@ fn lower_function(
                             state,
                             call_depth + 1,
                         )?;
-                        if !body.writes.is_empty() {
-                            return Err(unsupported(function, instruction, descriptor.opcode));
-                        }
+                        writes.extend(body.writes);
                         if let Some(thrown) = body.abrupt {
                             if let Some(target) = static_exception_target(
                                 function,
@@ -2646,6 +3161,15 @@ fn lower_function(
                     }
                     _ => return Err(unsupported(function, instruction, descriptor.opcode)),
                 }
+            }
+            "op_yield" => {
+                let _yield_point = unsigned_operand(instruction, "yieldPoint")?;
+                result = Some(read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "argument")?,
+                )?);
+                break;
             }
             "op_ret" => {
                 let value = signed_operand(instruction, "value")?;
@@ -2885,6 +3409,8 @@ fn known_truthiness(
         | RegisterValue::Builtin(_)
         | RegisterValue::PrivateName { .. }
         | RegisterValue::Arguments(_)
+        | RegisterValue::InternalObject { .. }
+        | RegisterValue::GlobalObject
         | RegisterValue::ExceptionObject(_)
         | RegisterValue::Error { .. } => Some(true),
         _ => None,
@@ -3001,7 +3527,14 @@ fn known_strict_equality(
         ) => Some(left == right),
         (RegisterValue::Object(left), RegisterValue::Object(right))
         | (RegisterValue::Array(left), RegisterValue::Array(right)) => Some(left == right),
+        (
+            RegisterValue::InternalObject { identity: left, .. },
+            RegisterValue::InternalObject {
+                identity: right, ..
+            },
+        ) => Some(left == right),
         (RegisterValue::Builtin(left), RegisterValue::Builtin(right)) => Some(left == right),
+        (RegisterValue::GlobalObject, RegisterValue::GlobalObject) => Some(true),
         (RegisterValue::Scalar(left), RegisterValue::Scalar(right))
             if expression_is_closed(left) && expression_is_closed(right) =>
         {
@@ -3039,6 +3572,8 @@ fn known_js_type(value: &RegisterValue) -> Option<&'static str> {
         | RegisterValue::Object(_)
         | RegisterValue::Array(_)
         | RegisterValue::Arguments(_)
+        | RegisterValue::InternalObject { .. }
+        | RegisterValue::GlobalObject
         | RegisterValue::ConsoleObject
         | RegisterValue::ExceptionObject(_)
         | RegisterValue::Error { .. } => Some("object"),
@@ -3089,7 +3624,7 @@ fn static_argument_values(
     first: usize,
 ) -> Result<Vec<RegisterValue>, LlvmError> {
     let values = match arguments {
-        RegisterValue::Arguments(values) => values.clone(),
+        RegisterValue::Arguments(values) => values.borrow().clone(),
         RegisterValue::Spread(values) => values.clone(),
         RegisterValue::Array(id) => {
             let Some(StaticHeapEntry::Array {
@@ -3223,6 +3758,35 @@ fn register_constant_value(
     })
 }
 
+fn register_value_from_static_application(
+    value: crate::application::StaticValue,
+) -> Result<RegisterValue, LlvmError> {
+    use crate::application::StaticValue;
+
+    Ok(match value {
+        StaticValue::Number(value) if value.is_nan() => RegisterValue::NaN,
+        StaticValue::Number(value) if value == f64::INFINITY => RegisterValue::PositiveInfinity,
+        StaticValue::Number(value) if value == f64::NEG_INFINITY => RegisterValue::NegativeInfinity,
+        StaticValue::Number(value) if value == 0.0 && value.is_sign_negative() => {
+            RegisterValue::NegativeZero
+        }
+        StaticValue::Number(value)
+            if value.fract() == 0.0 && value.abs() <= MAX_SAFE_INTEGER as f64 =>
+        {
+            RegisterValue::Scalar(ScalarExpression::Integer(value as i64))
+        }
+        StaticValue::Number(_) => {
+            return Err(imported_error(
+                "literal eval result leaves the admitted static Number domain",
+            ));
+        }
+        StaticValue::String(value) => RegisterValue::String(value),
+        StaticValue::Boolean(value) => RegisterValue::Boolean(value),
+        StaticValue::Null => RegisterValue::Null,
+        StaticValue::Undefined => RegisterValue::Undefined,
+    })
+}
+
 fn scalar_register(
     function: &VisitorFunction,
     registers: &BTreeMap<i64, RegisterValue>,
@@ -3253,6 +3817,8 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
             | RegisterValue::Builtin(_)
             | RegisterValue::PrivateName { .. }
             | RegisterValue::Arguments(_)
+            | RegisterValue::InternalObject { .. }
+            | RegisterValue::GlobalObject
             | RegisterValue::ExceptionObject(_)
             | RegisterValue::Error { .. }
             | RegisterValue::Undefined
@@ -3283,6 +3849,8 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
                 | RegisterValue::Object(_)
                 | RegisterValue::Array(_)
                 | RegisterValue::Arguments(_)
+                | RegisterValue::InternalObject { .. }
+                | RegisterValue::GlobalObject
                 | RegisterValue::ConsoleObject
                 | RegisterValue::ExceptionObject(_)
                 | RegisterValue::Error { .. }
@@ -3318,6 +3886,8 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
                     | RegisterValue::Object(_)
                     | RegisterValue::Array(_)
                     | RegisterValue::Arguments(_)
+                    | RegisterValue::InternalObject { .. }
+                    | RegisterValue::GlobalObject
                     | RegisterValue::ConsoleObject
                     | RegisterValue::ConsoleLog
                     | RegisterValue::ExceptionObject(_)
@@ -3360,6 +3930,8 @@ fn known_typeof(value: &RegisterValue) -> Option<&'static str> {
         | RegisterValue::Object(_)
         | RegisterValue::Array(_)
         | RegisterValue::Arguments(_)
+        | RegisterValue::InternalObject { .. }
+        | RegisterValue::GlobalObject
         | RegisterValue::ConsoleObject
         | RegisterValue::ExceptionObject(_)
         | RegisterValue::Error { .. } => Some("object"),
@@ -3532,28 +4104,63 @@ fn child_function_optional(
 }
 
 fn resolve_environment(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
     environment: &StaticEnvironmentRef,
     identifier: &str,
-) -> Option<StaticEnvironmentRef> {
+) -> Result<Option<StaticEnvironmentRef>, LlvmError> {
     let mut current = Some(environment.clone());
     while let Some(candidate) = current {
         let borrowed = candidate.borrow();
         if borrowed.bindings.contains_key(identifier) {
             drop(borrowed);
-            return Some(candidate);
+            return Ok(Some(candidate));
+        }
+        if let Some(object_scope) = &borrowed.object_scope {
+            let id = match object_scope {
+                RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+                RegisterValue::Function { heap_id, .. } => *heap_id,
+                _ => {
+                    return Err(imported_error(
+                        "with environment references a non-object binding object",
+                    ));
+                }
+            };
+            if static_lookup_property_descriptor(
+                heap,
+                id,
+                &StaticPropertyKey::Name(identifier.into()),
+                0,
+            )?
+            .is_some()
+            {
+                drop(borrowed);
+                return Ok(Some(candidate));
+            }
         }
         current = borrowed.parent.clone();
     }
-    None
+    Ok(None)
 }
 
 fn environment_binding(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
     environment: &StaticEnvironmentRef,
     identifier: &str,
-) -> Option<RegisterValue> {
-    let resolved = resolve_environment(environment, identifier)?;
-    let value = resolved.borrow().bindings.get(identifier).cloned();
-    value
+) -> Result<Option<RegisterValue>, LlvmError> {
+    let Some(resolved) = resolve_environment(heap, environment, identifier)? else {
+        return Ok(None);
+    };
+    let borrowed = resolved.borrow();
+    if let Some(value) = borrowed.bindings.get(identifier) {
+        return Ok(Some(value.clone()));
+    }
+    let object_scope = borrowed.object_scope.clone();
+    drop(borrowed);
+    object_scope
+        .map(|object| {
+            static_get_property(heap, &object, StaticPropertyKey::Name(identifier.into()))
+        })
+        .transpose()
 }
 
 fn identifier_is(
@@ -3580,6 +4187,8 @@ fn builtin_identifier(
         Ok(Some(Builtin::Array))
     } else if identifier_is(function, index, b"Object")? {
         Ok(Some(Builtin::Object))
+    } else if identifier_is(function, index, b"eval")? {
+        Ok(Some(Builtin::Eval))
     } else {
         Ok(None)
     }
@@ -3659,6 +4268,38 @@ fn static_define_property_attributes(
         enumerable: tri_state(2)?,
         writable: tri_state(4)?,
         has_value: raw & (1 << 6) != 0,
+    })
+}
+
+fn static_define_accessor_attributes(
+    value: &RegisterValue,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
+) -> Result<StaticDefineAccessorAttributes, LlvmError> {
+    let RegisterValue::Scalar(expression) = value else {
+        return Err(imported_error(
+            "define-accessor attributes are not a static integer",
+        ));
+    };
+    let raw = u32::try_from(evaluate(expression, functions, &[], 0)?)
+        .map_err(|_| imported_error("define-accessor attributes exceed u32"))?;
+    if raw & !0x1ff != 0 || raw & (1 << 6) != 0 || (raw >> 4) & 0b11 != 0b10 {
+        return Err(imported_error(
+            "accessor-property attributes contain unsupported bits",
+        ));
+    }
+    let tri_state = |shift: u32| match (raw >> shift) & 0b11_u32 {
+        0 => Ok(Some(false)),
+        1 => Ok(Some(true)),
+        2 => Ok(None),
+        _ => Err(imported_error(
+            "define-accessor attributes contain an invalid tri-state",
+        )),
+    };
+    Ok(StaticDefineAccessorAttributes {
+        configurable: tri_state(0)?,
+        enumerable: tri_state(2)?,
+        has_get: raw & (1 << 7) != 0,
+        has_set: raw & (1 << 8) != 0,
     })
 }
 
@@ -3914,6 +4555,7 @@ fn static_get_property(
         return Ok(RegisterValue::ArrayIteratorMethod);
     }
     if let RegisterValue::Arguments(values) = base {
+        let values = values.borrow();
         return match key {
             StaticPropertyKey::Index(index) => Ok(values
                 .get(index as usize)
@@ -4292,6 +4934,25 @@ fn static_set_property(
     key: StaticPropertyKey,
     value: RegisterValue,
 ) -> Result<StaticPropertyAssignment, LlvmError> {
+    if let RegisterValue::Arguments(values) = base {
+        let index = match key {
+            StaticPropertyKey::Index(index) => Some(index),
+            StaticPropertyKey::Name(name) => canonical_array_index(&name),
+        };
+        let Some(index) = index else {
+            return Err(imported_error(
+                "arguments object write requires an array-index property",
+            ));
+        };
+        let index = usize::try_from(index)
+            .map_err(|_| imported_error("arguments object index exceeds usize"))?;
+        let mut values = values.borrow_mut();
+        if index >= values.len() {
+            values.resize(index + 1, RegisterValue::Undefined);
+        }
+        values[index] = value;
+        return Ok(StaticPropertyAssignment::Stored);
+    }
     let id = match base {
         RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
         RegisterValue::Function { heap_id, .. } => *heap_id,
@@ -4629,6 +5290,135 @@ fn static_put_accessor(
         ) => {
             let is_new = !properties.contains_key(&name);
             let property = update(properties.get_mut(&name))?;
+            if is_new {
+                property_order.push(name.clone());
+            }
+            properties.insert(name, property);
+        }
+    }
+    Ok(())
+}
+
+fn static_define_accessor_property(
+    heap: &mut BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    key: StaticPropertyKey,
+    getter: Option<RegisterValue>,
+    setter: Option<RegisterValue>,
+    attributes: StaticDefineAccessorAttributes,
+) -> Result<(), LlvmError> {
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
+        _ => {
+            return Err(imported_error(
+                "accessor-property definition base is not a static object",
+            ));
+        }
+    };
+    let update = |existing: Option<&StaticProperty>| -> Result<StaticProperty, LlvmError> {
+        if let Some(existing) = existing
+            && !existing.configurable
+        {
+            if !existing.is_accessor
+                || attributes.configurable == Some(true)
+                || attributes
+                    .enumerable
+                    .is_some_and(|enumerable| enumerable != existing.enumerable)
+                || (attributes.has_get && getter != existing.getter)
+                || (attributes.has_set && setter != existing.setter)
+            {
+                return Err(imported_error(
+                    "invalid redefinition of a non-configurable static accessor",
+                ));
+            }
+        }
+        let existing_accessor = existing.filter(|property| property.is_accessor);
+        Ok(StaticProperty::accessor(
+            if attributes.has_get {
+                getter.clone()
+            } else {
+                existing_accessor.and_then(|property| property.getter.clone())
+            },
+            if attributes.has_set {
+                setter.clone()
+            } else {
+                existing_accessor.and_then(|property| property.setter.clone())
+            },
+            attributes
+                .enumerable
+                .or_else(|| existing.map(|property| property.enumerable))
+                .unwrap_or(false),
+            attributes
+                .configurable
+                .or_else(|| existing.map(|property| property.configurable))
+                .unwrap_or(false),
+        ))
+    };
+    let entry = heap.get_mut(&id).ok_or_else(|| {
+        imported_error("accessor-property definition references a missing static heap entry")
+    })?;
+    match (entry, key) {
+        (
+            StaticHeapEntry::Object {
+                properties,
+                property_order,
+                ..
+            }
+            | StaticHeapEntry::Function {
+                properties,
+                property_order,
+                ..
+            },
+            StaticPropertyKey::Name(name),
+        ) => {
+            let is_new = !properties.contains_key(&name);
+            let property = update(properties.get(&name))?;
+            if is_new {
+                property_order.push(name.clone());
+            }
+            properties.insert(name, property);
+        }
+        (
+            StaticHeapEntry::Object {
+                properties,
+                property_order,
+                ..
+            }
+            | StaticHeapEntry::Function {
+                properties,
+                property_order,
+                ..
+            },
+            StaticPropertyKey::Index(index),
+        ) => {
+            let name = index.to_string().into_boxed_str();
+            let is_new = !properties.contains_key(&name);
+            let property = update(properties.get(&name))?;
+            if is_new {
+                property_order.push(name.clone());
+            }
+            properties.insert(name, property);
+        }
+        (StaticHeapEntry::Array { elements, .. }, StaticPropertyKey::Index(index)) => {
+            let property = update(elements.get(&index))?;
+            elements.insert(index, property);
+        }
+        (StaticHeapEntry::Array { .. }, StaticPropertyKey::Name(name))
+            if name.as_ref() == "length" =>
+        {
+            return Err(imported_error("array length cannot become an accessor"));
+        }
+        (
+            StaticHeapEntry::Array {
+                properties,
+                property_order,
+                ..
+            },
+            StaticPropertyKey::Name(name),
+        ) => {
+            let is_new = !properties.contains_key(&name);
+            let property = update(properties.get(&name))?;
             if is_new {
                 property_order.push(name.clone());
             }
