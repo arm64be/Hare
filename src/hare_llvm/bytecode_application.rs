@@ -56,8 +56,20 @@ enum ScalarKind {
 enum Builtin {
     Array,
     EmptyPropertyNameEnumerator,
+    HasOwnPropertyFunction,
     Object,
     SentinelString,
+}
+
+fn builtin_is_callable(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::Array | Builtin::HasOwnPropertyFunction | Builtin::Object
+    )
+}
+
+fn builtin_is_constructor(builtin: Builtin) -> bool {
+    matches!(builtin, Builtin::Array | Builtin::Object)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1128,6 +1140,64 @@ fn lower_function(
                 )?;
                 registers.insert(destination, value);
             }
+            "op_enumerator_in_by_val" | "op_enumerator_has_own_property" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property_name = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "propertyName")?,
+                )?;
+                let enumerator = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "enumerator")?,
+                )?;
+                let RegisterValue::Enumerator { heap_id, .. } = enumerator else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                ensure_enumerator_base(&base, heap_id)?;
+                let RegisterValue::String(property_name) = property_name else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let key = StaticPropertyKey::Name(property_name);
+                let present = if descriptor.opcode == "op_enumerator_has_own_property" {
+                    static_has_own_property(&state.heap, &base, key)?
+                } else {
+                    static_has_property(&state.heap, &base, key)?
+                };
+                registers.insert(destination, RegisterValue::Boolean(present));
+            }
+            "op_enumerator_put_by_val" => {
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property_name = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "propertyName")?,
+                )?;
+                let enumerator = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "enumerator")?,
+                )?;
+                let RegisterValue::Enumerator { heap_id, .. } = enumerator else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                ensure_enumerator_base(&base, heap_id)?;
+                let RegisterValue::String(property_name) = property_name else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let value =
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                static_put_property(
+                    &mut state.heap,
+                    &base,
+                    StaticPropertyKey::Name(property_name),
+                    value,
+                )?;
+            }
             "op_get_by_val" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let base =
@@ -1828,9 +1898,10 @@ fn known_js_type(value: &RegisterValue) -> Option<&'static str> {
         | RegisterValue::PositiveInfinity
         | RegisterValue::NegativeInfinity => Some("number"),
         RegisterValue::String(_) | RegisterValue::Concatenation(_) => Some("string"),
-        RegisterValue::Function { .. } | RegisterValue::ConsoleLog | RegisterValue::Builtin(_) => {
-            Some("function")
-        }
+        RegisterValue::Function { .. } | RegisterValue::ConsoleLog => Some("function"),
+        RegisterValue::Builtin(builtin) if builtin_is_callable(*builtin) => Some("function"),
+        RegisterValue::Builtin(Builtin::SentinelString) => Some("string"),
+        RegisterValue::Builtin(Builtin::EmptyPropertyNameEnumerator) => Some("object"),
         RegisterValue::RegExp { .. }
         | RegisterValue::Object(_)
         | RegisterValue::Array(_)
@@ -1952,6 +2023,7 @@ fn register_constant_value(
                 RegisterValue::Builtin(Builtin::EmptyPropertyNameEnumerator)
             }
             "Object" => RegisterValue::Builtin(Builtin::Object),
+            "hasOwnPropertyFunction" => RegisterValue::Builtin(Builtin::HasOwnPropertyFunction),
             "sentinelString" => RegisterValue::Builtin(Builtin::SentinelString),
             _ => RegisterValue::Opaque,
         },
@@ -2023,10 +2095,12 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
                 | RegisterValue::ExceptionObject(_)
                 | RegisterValue::Error { .. }
         )),
-        "op_typeof_is_function" => Some(matches!(
-            value,
-            RegisterValue::Function { .. } | RegisterValue::ConsoleLog | RegisterValue::Builtin(_)
-        )),
+        "op_typeof_is_function" => Some(
+            matches!(
+                value,
+                RegisterValue::Function { .. } | RegisterValue::ConsoleLog
+            ) || matches!(value, RegisterValue::Builtin(builtin) if builtin_is_callable(*builtin)),
+        ),
         "op_is_undefined_or_null" => Some(matches!(
             value,
             RegisterValue::Undefined | RegisterValue::Null
@@ -2044,25 +2118,28 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
                 | RegisterValue::NegativeInfinity
         )),
         "op_is_big_int" => Some(false),
-        "op_is_object" => Some(matches!(
-            value,
-            RegisterValue::Function { .. }
-                | RegisterValue::RegExp { .. }
-                | RegisterValue::Object(_)
-                | RegisterValue::Array(_)
-                | RegisterValue::Arguments(_)
-                | RegisterValue::ConsoleObject
-                | RegisterValue::ConsoleLog
-                | RegisterValue::Builtin(_)
-                | RegisterValue::ExceptionObject(_)
-                | RegisterValue::Error { .. }
-        )),
-        "op_is_callable" => Some(matches!(
-            value,
-            RegisterValue::Function { .. } | RegisterValue::ConsoleLog | RegisterValue::Builtin(_)
-        )),
+        "op_is_object" => Some(
+            matches!(
+                value,
+                RegisterValue::Function { .. }
+                    | RegisterValue::RegExp { .. }
+                    | RegisterValue::Object(_)
+                    | RegisterValue::Array(_)
+                    | RegisterValue::Arguments(_)
+                    | RegisterValue::ConsoleObject
+                    | RegisterValue::ConsoleLog
+                    | RegisterValue::ExceptionObject(_)
+                    | RegisterValue::Error { .. }
+            ) || matches!(value, RegisterValue::Builtin(builtin) if builtin_is_callable(*builtin)),
+        ),
+        "op_is_callable" => Some(
+            matches!(
+                value,
+                RegisterValue::Function { .. } | RegisterValue::ConsoleLog
+            ) || matches!(value, RegisterValue::Builtin(builtin) if builtin_is_callable(*builtin)),
+        ),
         "op_is_constructor" => match value {
-            RegisterValue::Builtin(_) => Some(true),
+            RegisterValue::Builtin(builtin) => Some(builtin_is_constructor(*builtin)),
             RegisterValue::Function { .. } | RegisterValue::ConsoleLog => None,
             _ => Some(false),
         },
@@ -2080,9 +2157,10 @@ fn known_typeof(value: &RegisterValue) -> Option<&'static str> {
         | RegisterValue::PositiveInfinity
         | RegisterValue::NegativeInfinity => Some("number"),
         RegisterValue::String(_) | RegisterValue::Concatenation(_) => Some("string"),
-        RegisterValue::Function { .. } | RegisterValue::ConsoleLog | RegisterValue::Builtin(_) => {
-            Some("function")
-        }
+        RegisterValue::Function { .. } | RegisterValue::ConsoleLog => Some("function"),
+        RegisterValue::Builtin(builtin) if builtin_is_callable(*builtin) => Some("function"),
+        RegisterValue::Builtin(Builtin::SentinelString) => Some("string"),
+        RegisterValue::Builtin(Builtin::EmptyPropertyNameEnumerator) => Some("object"),
         RegisterValue::Null
         | RegisterValue::RegExp { .. }
         | RegisterValue::Object(_)
@@ -2458,7 +2536,7 @@ fn static_get_property(
             .get(&name)
             .cloned()
             .map(Ok)
-            .unwrap_or_else(|| missing_static_property(&name, is_array)),
+            .unwrap_or_else(|| inherited_static_property(&name, is_array)),
         (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Index(index)) => {
             let name = index.to_string();
             properties
@@ -2483,7 +2561,7 @@ fn static_get_property(
             .get(&name)
             .cloned()
             .map(Ok)
-            .unwrap_or_else(|| missing_static_property(&name, is_array)),
+            .unwrap_or_else(|| inherited_static_property(&name, is_array)),
     }
 }
 
@@ -2624,6 +2702,43 @@ fn static_has_property(
     }
 }
 
+fn static_has_own_property(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    key: StaticPropertyKey,
+) -> Result<bool, LlvmError> {
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        _ => {
+            return Err(imported_error(
+                "own-property membership base is not a static object",
+            ));
+        }
+    };
+    let entry = heap.get(&id).ok_or_else(|| {
+        imported_error("own-property membership references a missing static heap entry")
+    })?;
+    Ok(match (entry, key) {
+        (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Name(name)) => {
+            properties.contains_key(&name)
+        }
+        (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Index(index)) => {
+            properties.contains_key(index.to_string().as_str())
+        }
+        (StaticHeapEntry::Array { elements, .. }, StaticPropertyKey::Index(index)) => {
+            elements.contains_key(&index)
+        }
+        (StaticHeapEntry::Array { .. }, StaticPropertyKey::Name(name))
+            if name.as_ref() == "length" =>
+        {
+            true
+        }
+        (StaticHeapEntry::Array { properties, .. }, StaticPropertyKey::Name(name)) => {
+            properties.contains_key(&name)
+        }
+    })
+}
+
 fn static_delete_property(
     heap: &mut BTreeMap<u32, StaticHeapEntry>,
     base: &RegisterValue,
@@ -2709,6 +2824,13 @@ fn missing_static_property(name: &str, is_array: bool) -> Result<RegisterValue, 
         )));
     }
     Ok(RegisterValue::Undefined)
+}
+
+fn inherited_static_property(name: &str, is_array: bool) -> Result<RegisterValue, LlvmError> {
+    if name == "hasOwnProperty" {
+        return Ok(RegisterValue::Builtin(Builtin::HasOwnPropertyFunction));
+    }
+    missing_static_property(name, is_array)
 }
 
 fn signed_operand(instruction: &VisitorInstruction, name: &str) -> Result<i64, LlvmError> {

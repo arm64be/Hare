@@ -157,6 +157,8 @@ test.skipIf(!isLinux)(
       3
       7
       12
+      23
+      2
       0
       42
       42
