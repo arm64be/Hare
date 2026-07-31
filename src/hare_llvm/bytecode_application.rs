@@ -289,6 +289,44 @@ fn lower_function(
                     continue;
                 }
             }
+            "op_switch_imm" | "op_switch_char" | "op_switch_string" => {
+                let table_index = usize::try_from(unsigned_operand(instruction, "tableIndex")?)
+                    .map_err(|_| imported_error("switch table index does not fit usize"))?;
+                let scrutinee = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "scrutinee")?,
+                )?;
+                let relative_offset = match descriptor.opcode {
+                    "op_switch_imm" => {
+                        let RegisterValue::Scalar(expression) = scrutinee else {
+                            return Err(unsupported(function, instruction, descriptor.opcode));
+                        };
+                        if !expression_is_closed(&expression) {
+                            return Err(unsupported(function, instruction, descriptor.opcode));
+                        }
+                        let value = evaluate(&expression, functions, &[], 0)?;
+                        simple_switch_offset(function, table_index, i32::try_from(value).ok())?
+                    }
+                    "op_switch_char" => {
+                        let value = known_switch_string(&scrutinee, functions)?
+                            .ok_or_else(|| unsupported(function, instruction, descriptor.opcode))?;
+                        let mut code_units = value.encode_utf16();
+                        let first = code_units.next();
+                        let key = first.filter(|_| code_units.next().is_none()).map(i32::from);
+                        simple_switch_offset(function, table_index, key)?
+                    }
+                    "op_switch_string" => {
+                        let value = known_switch_string(&scrutinee, functions)?
+                            .ok_or_else(|| unsupported(function, instruction, descriptor.opcode))?;
+                        string_switch_offset(function, table_index, &value)?
+                    }
+                    _ => unreachable!(),
+                };
+                instruction_index =
+                    relative_target_index(instruction, relative_offset, &instruction_indices)?;
+                continue;
+            }
             "op_jeq_null" | "op_jneq_null" | "op_jundefined_or_null" | "op_jnundefined_or_null" => {
                 let value =
                     read_register(function, &registers, signed_operand(instruction, "value")?)?;
@@ -947,14 +985,83 @@ fn branch_target_index(
     instruction: &VisitorInstruction,
     instruction_indices: &BTreeMap<u32, usize>,
 ) -> Result<usize, LlvmError> {
+    relative_target_index(
+        instruction,
+        signed_operand(instruction, "targetLabel")?,
+        instruction_indices,
+    )
+}
+
+fn relative_target_index(
+    instruction: &VisitorInstruction,
+    relative_offset: impl Into<i64>,
+    instruction_indices: &BTreeMap<u32, usize>,
+) -> Result<usize, LlvmError> {
     let target = i64::from(instruction.byte_offset)
-        .checked_add(signed_operand(instruction, "targetLabel")?)
+        .checked_add(relative_offset.into())
         .and_then(|target| u32::try_from(target).ok())
         .ok_or_else(|| imported_error("branch target leaves the instruction stream"))?;
     instruction_indices
         .get(&target)
         .copied()
         .ok_or_else(|| imported_error(format!("branch target {target} is not an instruction")))
+}
+
+fn simple_switch_offset(
+    function: &VisitorFunction,
+    table_index: usize,
+    key: Option<i32>,
+) -> Result<i32, LlvmError> {
+    let table = function
+        .simple_switch_tables
+        .get(table_index)
+        .ok_or_else(|| imported_error(format!("missing simple switch table {table_index}")))?;
+    let branch_offset = key.and_then(|key| {
+        if table.is_list {
+            table
+                .branch_offsets
+                .chunks_exact(2)
+                .find_map(|pair| (pair[0] == key).then_some(pair[1]))
+        } else {
+            let index = i64::from(key) - i64::from(table.minimum);
+            usize::try_from(index)
+                .ok()
+                .and_then(|index| table.branch_offsets.get(index).copied())
+                .filter(|offset| *offset != 0)
+        }
+    });
+    Ok(branch_offset.unwrap_or(table.default_offset))
+}
+
+fn string_switch_offset(
+    function: &VisitorFunction,
+    table_index: usize,
+    key: &str,
+) -> Result<i32, LlvmError> {
+    let table = function
+        .string_switch_tables
+        .get(table_index)
+        .ok_or_else(|| imported_error(format!("missing string switch table {table_index}")))?;
+    Ok(table
+        .entries
+        .iter()
+        .find_map(|entry| source_text_equals_str(&entry.key, key).then_some(entry.branch_offset))
+        .unwrap_or(table.default_offset))
+}
+
+fn known_switch_string(
+    value: &RegisterValue,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
+) -> Result<Option<String>, LlvmError> {
+    match value {
+        RegisterValue::String(value) => Ok(Some(value.to_string())),
+        RegisterValue::Concatenation(_) => {
+            let mut output = String::new();
+            append_js_string(value, functions, &mut output)?;
+            Ok(Some(output))
+        }
+        _ => Ok(None),
+    }
 }
 
 fn known_truthiness(
@@ -1294,6 +1401,15 @@ fn source_text_to_string(value: &SourceText) -> Result<String, LlvmError> {
         SourceText::Latin1(bytes) => Ok(bytes.iter().map(|byte| char::from(*byte)).collect()),
         SourceText::Utf16(code_units) => String::from_utf16(code_units)
             .map_err(|_| imported_error("string constant contains an unpaired UTF-16 surrogate")),
+    }
+}
+
+fn source_text_equals_str(value: &SourceText, expected: &str) -> bool {
+    match value {
+        SourceText::Latin1(bytes) => expected
+            .encode_utf16()
+            .eq(bytes.iter().copied().map(u16::from)),
+        SourceText::Utf16(code_units) => expected.encode_utf16().eq(code_units.iter().copied()),
     }
 }
 

@@ -187,6 +187,81 @@ extern "C" fn Bun__Hare__visitorInstruction(
     })
 }
 
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorSimpleSwitchTable(
+    context: *mut c_void,
+    table_index: u32,
+    minimum: i32,
+    default_offset: i32,
+    is_list: u32,
+    branch_offsets: *const i32,
+    branch_offset_count: usize,
+) -> u32 {
+    if branch_offset_count != 0 && branch_offsets.is_null() {
+        return 0;
+    }
+    callback_boundary(context, |context| {
+        let offsets = if branch_offset_count == 0 {
+            Box::default()
+        } else {
+            // SAFETY: C++ provides a callback-scoped contiguous `int32_t`
+            // span and the builder copies it before returning.
+            unsafe { core::slice::from_raw_parts(branch_offsets, branch_offset_count) }.into()
+        };
+        context
+            .builder
+            .as_mut()
+            .ok_or_else(|| ImportError::VisitorRejected("missing import builder".into()))?
+            .simple_switch_table(table_index, minimum, default_offset, is_list != 0, offsets)
+    })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorBeginStringSwitchTable(
+    context: *mut c_void,
+    table_index: u32,
+    minimum_length: u32,
+    maximum_length: u32,
+    default_offset: i32,
+    entry_count: u32,
+) -> u32 {
+    callback_boundary(context, |context| {
+        context
+            .builder
+            .as_mut()
+            .ok_or_else(|| ImportError::VisitorRejected("missing import builder".into()))?
+            .begin_string_switch_table(
+                table_index,
+                minimum_length,
+                maximum_length,
+                default_offset,
+                entry_count,
+            )
+    })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorStringSwitchEntry(
+    context: *mut c_void,
+    table_index: u32,
+    key_data: *const c_void,
+    key_length: usize,
+    key_is_latin1: u32,
+    branch_offset: i32,
+    index_in_table: u32,
+) -> u32 {
+    callback_boundary(context, |context| {
+        // SAFETY: C++ keeps the StringImpl span alive for this synchronous
+        // callback and `copy_source_text` owns the copied code units.
+        let key = unsafe { copy_source_text(key_data, key_length, key_is_latin1)? };
+        context
+            .builder
+            .as_mut()
+            .ok_or_else(|| ImportError::VisitorRejected("missing import builder".into()))?
+            .string_switch_entry(table_index, key, branch_offset, index_in_table)
+    })
+}
+
 fn constant_source_representation(value: u32) -> Result<ConstantSourceRepresentation, ImportError> {
     match value {
         0 => Ok(ConstantSourceRepresentation::Other),

@@ -48,6 +48,16 @@ fn structural_import_is_owned_and_validated() {
     builder
         .identifier(0, SourceText::Latin1(Box::from(&b"answer"[..])))
         .unwrap();
+    builder
+        .simple_switch_table(0, 1, 8, false, Box::from([4, 0]))
+        .unwrap();
+    builder.begin_string_switch_table(0, 1, 1, 6, 2).unwrap();
+    builder
+        .string_switch_entry(0, SourceText::Latin1(Box::from(&b"z"[..])), 4, 1)
+        .unwrap();
+    builder
+        .string_switch_entry(0, SourceText::Latin1(Box::from(&b"a"[..])), 2, 0)
+        .unwrap();
     builder.instruction(0, 1, 2, 1, 1).unwrap();
     builder
         .operand(
@@ -75,5 +85,13 @@ fn structural_import_is_owned_and_validated() {
     assert!(first.contains("name=\"<absolute>/entry.js\""));
     assert!(first.contains("constant k0 source=Integer value=int32:1"));
     assert!(first.contains("identifier id0 value=latin1:616e73776572"));
+    assert!(first.contains("simple-switch t0 minimum=1 default=8 list=false offsets=4,0"));
+    assert!(
+        first.contains("string-switch t0 minimum_length=1 maximum_length=1 default=6 entries=2")
+    );
+    assert!(
+        first.find("string-switch-entry key=latin1:61").unwrap()
+            < first.find("string-switch-entry key=latin1:7a").unwrap()
+    );
     assert!(!first.contains("random-workspace"));
 }

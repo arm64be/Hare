@@ -61,6 +61,12 @@ extern "C" uint32_t Bun__Hare__visitorConstantText(
     void*, uint32_t, uint32_t, uint32_t, const void*, size_t, uint32_t);
 extern "C" uint32_t Bun__Hare__visitorIdentifier(
     void*, uint32_t, const void*, size_t, uint32_t);
+extern "C" uint32_t Bun__Hare__visitorSimpleSwitchTable(
+    void*, uint32_t, int32_t, int32_t, uint32_t, const int32_t*, size_t);
+extern "C" uint32_t Bun__Hare__visitorBeginStringSwitchTable(
+    void*, uint32_t, uint32_t, uint32_t, int32_t, uint32_t);
+extern "C" uint32_t Bun__Hare__visitorStringSwitchEntry(
+    void*, uint32_t, const void*, size_t, uint32_t, int32_t, uint32_t);
 extern "C" uint32_t Bun__Hare__visitorOperand(
     void*, const uint8_t*, size_t, uint32_t, uint32_t, int64_t, uint64_t);
 extern "C" uint32_t Bun__Hare__visitorParserError(
@@ -313,6 +319,51 @@ static bool visitConstantsAndIdentifiers(
     return true;
 }
 
+static bool visitSwitchTables(JSC::UnlinkedCodeBlock& block, void* visitorContext)
+{
+    size_t simpleCount = block.numberOfUnlinkedSwitchJumpTables();
+    size_t stringCount = block.numberOfUnlinkedStringSwitchJumpTables();
+    if (simpleCount > UINT32_MAX || stringCount > UINT32_MAX)
+        return false;
+
+    for (uint32_t index = 0; index < simpleCount; ++index) {
+        const auto& table = block.unlinkedSwitchJumpTable(index);
+        auto branchOffsets = table.m_branchOffsets.span();
+        if (!Bun__Hare__visitorSimpleSwitchTable(
+                visitorContext, index, table.m_min, table.m_defaultOffset,
+                table.isList(), branchOffsets.data(), branchOffsets.size()))
+            return false;
+    }
+
+    for (uint32_t index = 0; index < stringCount; ++index) {
+        const auto& table = block.unlinkedStringSwitchJumpTable(index);
+        if (table.m_offsetTable.size() > UINT32_MAX
+            || !Bun__Hare__visitorBeginStringSwitchTable(
+                visitorContext, index, table.m_minLength, table.m_maxLength,
+                table.m_defaultOffset,
+                static_cast<uint32_t>(table.m_offsetTable.size())))
+            return false;
+        for (const auto& entry : table.m_offsetTable) {
+            auto* key = entry.key.get();
+            uint32_t accepted;
+            if (key->is8Bit()) {
+                auto span = key->span8();
+                accepted = Bun__Hare__visitorStringSwitchEntry(
+                    visitorContext, index, span.data(), span.size(), 1,
+                    entry.value.m_branchOffset, entry.value.m_indexInTable);
+            } else {
+                auto span = key->span16();
+                accepted = Bun__Hare__visitorStringSwitchEntry(
+                    visitorContext, index, span.data(), span.size(), 0,
+                    entry.value.m_branchOffset, entry.value.m_indexInTable);
+            }
+            if (!accepted)
+                return false;
+        }
+    }
+    return true;
+}
+
 static ImportResult materializeChildren(
     JSC::VM& vm, FunctionRecords& records, uint32_t parentId,
     void* visitorContext)
@@ -408,6 +459,8 @@ static ImportResult visitRecords(JSC::VM& vm, const FunctionRecords& records, vo
                 thisRegister, scopeRegister, callFrameThisArgumentRegister,
                 callFrameFirstArgumentRegister, instructionBytes))
             return result(ImportStatus::VisitorRejected, 2);
+        if (!visitSwitchTables(*records[functionId]->block.get(), visitorContext))
+            return result(ImportStatus::VisitorRejected, 7);
         if (!visitConstantsAndIdentifiers(
                 *records[functionId]->block.get(), visitorContext))
             return result(ImportStatus::VisitorRejected, 6);

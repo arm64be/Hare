@@ -105,6 +105,42 @@ pub fn render_visitor_dump(
             )
             .unwrap();
         }
+        for (index, table) in function.simple_switch_tables.iter().enumerate() {
+            write!(
+                output,
+                "  simple-switch t{index} minimum={} default={} list={} offsets=",
+                table.minimum, table.default_offset, table.is_list
+            )
+            .unwrap();
+            for (offset_index, offset) in table.branch_offsets.iter().enumerate() {
+                if offset_index != 0 {
+                    output.push(',');
+                }
+                write!(output, "{offset}").unwrap();
+            }
+            output.push('\n');
+        }
+        for (index, table) in function.string_switch_tables.iter().enumerate() {
+            writeln!(
+                output,
+                "  string-switch t{index} minimum_length={} maximum_length={} default={} entries={}",
+                table.minimum_length,
+                table.maximum_length,
+                table.default_offset,
+                table.declared_entry_count
+            )
+            .unwrap();
+            for entry in &table.entries {
+                writeln!(
+                    output,
+                    "    string-switch-entry key={} offset={} index={}",
+                    render_source_text(&entry.key),
+                    entry.branch_offset,
+                    entry.index_in_table
+                )
+                .unwrap();
+            }
+        }
         for instruction in &function.instructions {
             writeln!(
                 output,

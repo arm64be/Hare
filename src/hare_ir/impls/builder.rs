@@ -4,7 +4,8 @@ use crate::{
     CoverageState, FunctionId, FunctionRelation, FunctionSpecialization, HARE_IR_SCHEMA_VERSION,
     ImportError, InputKind, OperandRole, OperandValue, OwnedVisitorUnit, PINNED_BUN_REVISION,
     PINNED_WEBKIT_REVISION, SourceId, SourceRecord, SourceText, VisitorConstant, VisitorFunction,
-    VisitorInstruction, VisitorOperand,
+    VisitorInstruction, VisitorOperand, VisitorSimpleSwitchTable, VisitorStringSwitchEntry,
+    VisitorStringSwitchTable,
 };
 
 /// Single-use builder populated by the sealed JSC bridge.
@@ -80,6 +81,8 @@ impl ImportBuilder {
             call_frame_first_argument_register,
             constants: Vec::new(),
             identifiers: Vec::new(),
+            simple_switch_tables: Vec::new(),
+            string_switch_tables: Vec::new(),
             instruction_bytes,
             instructions: Vec::new(),
         });
@@ -109,6 +112,84 @@ impl ImportBuilder {
             return Err(ImportError::IdentifierOutOfOrder(index));
         }
         function.identifiers.push(value);
+        Ok(())
+    }
+
+    pub fn simple_switch_table(
+        &mut self,
+        index: u32,
+        minimum: i32,
+        default_offset: i32,
+        is_list: bool,
+        branch_offsets: Box<[i32]>,
+    ) -> Result<(), ImportError> {
+        let function_id = self
+            .active_function
+            .ok_or(ImportError::SwitchTableWithoutFunction)?;
+        let function = &mut self.unit.functions[function_id.index()];
+        if usize::try_from(index).ok() != Some(function.simple_switch_tables.len()) {
+            return Err(ImportError::SimpleSwitchTableOutOfOrder(index));
+        }
+        function
+            .simple_switch_tables
+            .push(VisitorSimpleSwitchTable {
+                minimum,
+                default_offset,
+                is_list,
+                branch_offsets,
+            });
+        Ok(())
+    }
+
+    pub fn begin_string_switch_table(
+        &mut self,
+        index: u32,
+        minimum_length: u32,
+        maximum_length: u32,
+        default_offset: i32,
+        declared_entry_count: u32,
+    ) -> Result<(), ImportError> {
+        let function_id = self
+            .active_function
+            .ok_or(ImportError::SwitchTableWithoutFunction)?;
+        let function = &mut self.unit.functions[function_id.index()];
+        if usize::try_from(index).ok() != Some(function.string_switch_tables.len()) {
+            return Err(ImportError::StringSwitchTableOutOfOrder(index));
+        }
+        function
+            .string_switch_tables
+            .push(VisitorStringSwitchTable {
+                minimum_length,
+                maximum_length,
+                default_offset,
+                declared_entry_count,
+                entries: Vec::with_capacity(declared_entry_count as usize),
+            });
+        Ok(())
+    }
+
+    pub fn string_switch_entry(
+        &mut self,
+        table_index: u32,
+        key: SourceText,
+        branch_offset: i32,
+        index_in_table: u32,
+    ) -> Result<(), ImportError> {
+        let function_id = self
+            .active_function
+            .ok_or(ImportError::SwitchTableWithoutFunction)?;
+        let table = self.unit.functions[function_id.index()]
+            .string_switch_tables
+            .get_mut(table_index as usize)
+            .ok_or(ImportError::StringSwitchEntryWithoutTable(table_index))?;
+        if table.entries.len() >= table.declared_entry_count as usize {
+            return Err(ImportError::StringSwitchEntryOverflow(table_index));
+        }
+        table.entries.push(VisitorStringSwitchEntry {
+            key,
+            branch_offset,
+            index_in_table,
+        });
         Ok(())
     }
 
@@ -195,7 +276,14 @@ impl ImportBuilder {
         self.unit.structurally_complete = true;
     }
 
-    pub fn finish(self) -> Result<OwnedVisitorUnit, ImportError> {
+    pub fn finish(mut self) -> Result<OwnedVisitorUnit, ImportError> {
+        for function in &mut self.unit.functions {
+            for table in &mut function.string_switch_tables {
+                table
+                    .entries
+                    .sort_by(|left, right| left.key.cmp(&right.key));
+            }
+        }
         self.unit.validate().map_err(ImportError::Validation)?;
         Ok(self.unit)
     }

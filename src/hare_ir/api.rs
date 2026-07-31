@@ -61,7 +61,7 @@ pub enum FunctionSpecialization {
     FunctionConstructorConstruct,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum SourceText {
     Latin1(Box<[u8]>),
     Utf16(Box<[u16]>),
@@ -185,6 +185,31 @@ pub struct VisitorConstant {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VisitorSimpleSwitchTable {
+    pub minimum: i32,
+    pub default_offset: i32,
+    pub is_list: bool,
+    /// Dense branch offsets, or alternating key/offset pairs for list tables.
+    pub branch_offsets: Box<[i32]>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VisitorStringSwitchEntry {
+    pub key: SourceText,
+    pub branch_offset: i32,
+    pub index_in_table: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VisitorStringSwitchTable {
+    pub minimum_length: u32,
+    pub maximum_length: u32,
+    pub default_offset: i32,
+    pub declared_entry_count: u32,
+    pub entries: Vec<VisitorStringSwitchEntry>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VisitorFunction {
     pub id: FunctionId,
     pub parent: Option<FunctionId>,
@@ -205,6 +230,8 @@ pub struct VisitorFunction {
     pub call_frame_first_argument_register: i32,
     pub constants: Vec<VisitorConstant>,
     pub identifiers: Vec<SourceText>,
+    pub simple_switch_tables: Vec<VisitorSimpleSwitchTable>,
+    pub string_switch_tables: Vec<VisitorStringSwitchTable>,
     pub instruction_bytes: u32,
     pub instructions: Vec<VisitorInstruction>,
 }
@@ -299,6 +326,62 @@ impl OwnedVisitorUnit {
                 {
                     return Err(ValidationError::InvalidLinkTimeConstant {
                         function: function.id,
+                    });
+                }
+            }
+
+            for (table_index, table) in function.simple_switch_tables.iter().enumerate() {
+                let valid = if table.is_list {
+                    table.branch_offsets.len().is_multiple_of(2)
+                        && table
+                            .branch_offsets
+                            .chunks_exact(2)
+                            .map(|pair| pair[0])
+                            .collect::<BTreeSet<_>>()
+                            .len()
+                            == table.branch_offsets.len() / 2
+                } else {
+                    table.branch_offsets.is_empty()
+                        || i64::from(table.minimum)
+                            .checked_add(table.branch_offsets.len() as i64 - 1)
+                            .is_some_and(|maximum| maximum <= i64::from(i32::MAX))
+                };
+                if !valid {
+                    return Err(ValidationError::MalformedSimpleSwitchTable {
+                        function: function.id,
+                        table: table_index as u32,
+                    });
+                }
+            }
+
+            for (table_index, table) in function.string_switch_tables.iter().enumerate() {
+                let valid_count =
+                    usize::try_from(table.declared_entry_count).ok() == Some(table.entries.len());
+                let valid_lengths = if table.entries.is_empty() {
+                    table.minimum_length == 0 && table.maximum_length == 0
+                } else {
+                    table.minimum_length <= table.maximum_length
+                        && table.entries.iter().all(|entry| {
+                            u32::try_from(entry.key.code_unit_len()).is_ok_and(|length| {
+                                length >= table.minimum_length && length <= table.maximum_length
+                            })
+                        })
+                };
+                let sorted_unique = table
+                    .entries
+                    .windows(2)
+                    .all(|entries| entries[0].key < entries[1].key);
+                let indices = table
+                    .entries
+                    .iter()
+                    .map(|entry| entry.index_in_table)
+                    .collect::<BTreeSet<_>>();
+                let dense_indices = indices.len() == table.entries.len()
+                    && indices.iter().copied().eq(0..table.declared_entry_count);
+                if !valid_count || !valid_lengths || !sorted_unique || !dense_indices {
+                    return Err(ValidationError::MalformedStringSwitchTable {
+                        function: function.id,
+                        table: table_index as u32,
                     });
                 }
             }
@@ -824,6 +907,11 @@ pub enum ImportError {
     ConstantOutOfOrder(u32),
     IdentifierWithoutFunction,
     IdentifierOutOfOrder(u32),
+    SwitchTableWithoutFunction,
+    SimpleSwitchTableOutOfOrder(u32),
+    StringSwitchTableOutOfOrder(u32),
+    StringSwitchEntryWithoutTable(u32),
+    StringSwitchEntryOverflow(u32),
     OperandWithoutInstruction,
     DuplicateOperandManifest(Box<str>),
     CacheOperandCrossedBoundary(Box<str>),
@@ -891,6 +979,14 @@ pub enum ValidationError {
     },
     InvalidLinkTimeConstant {
         function: FunctionId,
+    },
+    MalformedSimpleSwitchTable {
+        function: FunctionId,
+        table: u32,
+    },
+    MalformedStringSwitchTable {
+        function: FunctionId,
+        table: u32,
     },
     MalformedInstructionStream {
         function: FunctionId,

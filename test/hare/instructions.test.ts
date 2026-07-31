@@ -136,6 +136,11 @@ test.skipIf(!isLinux)(
       2
       3
       5
+      20
+      2
+      8
+      11
+      12
       hare-42
       42
       true
@@ -193,6 +198,7 @@ test.skipIf(!isLinux)(
       expect({ compileError, failedFunctionDump }).toEqual({ compileError: undefined, failedFunctionDump: "" });
       expect(compileStderr).toContain("hare-dump schema=1");
       expect(compileStderr).toContain("structurally_complete=true");
+      expect(compileStderr).toMatch(/simple-switch t\d+ minimum=2147483647 default=-?\d+ list=true offsets=/);
       const claimedOpcodes = new Set(
         cases.filter(testCase => testCase.lowering === lowering).flatMap(testCase => testCase.opcodes),
       );

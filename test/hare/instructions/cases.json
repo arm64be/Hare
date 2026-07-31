@@ -303,6 +303,88 @@
     "source": "const h026KnownBranchValue = (function (value) { return value; })(5); console.log((typeof h026KnownBranchValue === \"number\" || typeof h026KnownBranchValue === \"string\") ? 1 : 0); console.log(h026KnownBranchValue == null ? 1 : 2); console.log(h026KnownBranchValue != null ? 3 : 4); const h026OptionalObject = { x: h026KnownBranchValue }; console.log(h026OptionalObject?.x);"
   },
   {
+    "id": "control.closed-immediate-switch",
+    "family": "control",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call_ignore_result",
+      "op_jmp",
+      "op_switch_imm",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "switch (2) { case 1: console.log(10); break; case 2: console.log(20); break; case 3: console.log(30); break; default: console.log(40); }"
+  },
+  {
+    "id": "control.closed-character-switch",
+    "family": "control",
+    "lowering": "imported",
+    "opcodes": [
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call_ignore_result",
+      "op_jmp",
+      "op_switch_char"
+    ],
+    "verified_opcodes": [],
+    "source": "switch (\"b\") { case \"a\": console.log(1); break; case \"b\": console.log(2); break; case \"c\": console.log(3); break; default: console.log(4); }"
+  },
+  {
+    "id": "control.closed-string-switch",
+    "family": "control",
+    "lowering": "imported",
+    "opcodes": [
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call_ignore_result",
+      "op_jmp",
+      "op_switch_string"
+    ],
+    "verified_opcodes": [],
+    "source": "switch (\"hare\") { case \"ant\": console.log(7); break; case \"hare\": console.log(8); break; case \"zebra\": console.log(9); break; default: console.log(10); }"
+  },
+  {
+    "id": "control.closed-sparse-immediate-switch",
+    "family": "control",
+    "lowering": "imported",
+    "opcodes": [
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call_ignore_result",
+      "op_jmp",
+      "op_switch_imm"
+    ],
+    "verified_opcodes": [],
+    "source": "switch (1000000) { case -1000000: console.log(9); break; case 7: console.log(10); break; case 1000000: console.log(11); break; default: console.log(12); }"
+  },
+  {
+    "id": "control.closed-sparse-character-switch",
+    "family": "control",
+    "lowering": "imported",
+    "opcodes": [
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call_ignore_result",
+      "op_jmp",
+      "op_switch_char"
+    ],
+    "verified_opcodes": [],
+    "source": "switch (\"Ω\") { case \"a\": console.log(11); break; case \"Ω\": console.log(12); break; case \"￿\": console.log(13); break; default: console.log(14); }"
+  },
+  {
     "id": "numeric.string-concatenation",
     "family": "numeric_coercion",
     "lowering": "imported",
