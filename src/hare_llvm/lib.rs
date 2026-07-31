@@ -124,6 +124,7 @@ pub enum AbiType {
     I64,
     F64,
     Pointer,
+    TaggedValue,
     RealmHandle,
     RuntimeServiceHandle,
     TaggedCompletion,
@@ -140,6 +141,7 @@ impl AbiType {
             Self::I64 => "i64",
             Self::F64 => "double",
             Self::Pointer
+            | Self::TaggedValue
             | Self::RealmHandle
             | Self::RuntimeServiceHandle
             | Self::TaggedCompletion => "ptr",

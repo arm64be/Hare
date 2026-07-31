@@ -72,6 +72,7 @@ members = [
   "src/hare_analysis",
   "src/hare_frontend",
   "src/hare_llvm",
+  "src/hare_runtime",
   "src/jsc_macros",
   "src/ptr",
   "src/boringssl",
@@ -433,6 +434,7 @@ hare_ir = { path = "src/hare_ir" }
 hare_analysis = { path = "src/hare_analysis" }
 hare_frontend = { path = "src/hare_frontend" }
 hare_llvm = { path = "src/hare_llvm" }
+hare_runtime = { path = "src/hare_runtime" }
 bun_jsc_macros = { path = "src/jsc_macros" }
 bun_ptr = { path = "src/ptr" }
 bun_boringssl = { path = "src/boringssl" }

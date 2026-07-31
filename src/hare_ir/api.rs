@@ -490,6 +490,10 @@ impl EffectSet {
         self.0 & other.0 == other.0
     }
 
+    pub const fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+
     pub const fn bits(self) -> u64 {
         self.0
     }

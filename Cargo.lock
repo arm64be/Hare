@@ -2760,6 +2760,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hare_runtime"
+version = "0.0.0"
+dependencies = [
+ "hare_frontend",
+ "hare_ir",
+ "hare_llvm",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
