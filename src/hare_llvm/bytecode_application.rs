@@ -82,6 +82,8 @@ enum RegisterValue {
     BuiltinScope(Builtin),
     Builtin(Builtin),
     Enumerator { heap_id: u32, keys: Vec<Box<str>> },
+    ExceptionObject(Box<Self>),
+    Error { kind: u32, message: Box<str> },
     Object(u32),
     Array(u32),
     Spread(Vec<Self>),
@@ -213,6 +215,7 @@ fn lower_function(
     let mut result = None;
     let mut heap = BTreeMap::new();
     let mut next_heap_id = 0_u32;
+    let mut pending_exception = None;
     let instruction_indices = function
         .instructions
         .iter()
@@ -352,6 +355,61 @@ fn lower_function(
                 let source = signed_operand(instruction, "src")?;
                 let value = read_register(function, &registers, source)?;
                 registers.insert(destination, value);
+            }
+            "op_throw" | "op_throw_static_error" => {
+                let thrown = if descriptor.opcode == "op_throw" {
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?
+                } else {
+                    let message = read_register(
+                        function,
+                        &registers,
+                        signed_operand(instruction, "message")?,
+                    )?;
+                    let RegisterValue::String(message) = message else {
+                        return Err(unsupported(function, instruction, descriptor.opcode));
+                    };
+                    RegisterValue::Error {
+                        kind: u32::try_from(unsigned_operand(instruction, "errorType")?)
+                            .map_err(|_| imported_error("static error kind exceeds u32"))?,
+                        message,
+                    }
+                };
+                let Some(handler) = function.exception_handlers.iter().find(|handler| {
+                    handler.start <= instruction.byte_offset
+                        && instruction.byte_offset < handler.end
+                }) else {
+                    return Err(imported_error(format!(
+                        "f{} has an uncaught static throw at byte {}",
+                        function.id.0, instruction.byte_offset
+                    )));
+                };
+                pending_exception = Some(thrown);
+                instruction_index = instruction_indices
+                    .get(&handler.target)
+                    .copied()
+                    .ok_or_else(|| {
+                        imported_error("exception handler target is not an instruction")
+                    })?;
+                continue;
+            }
+            "op_catch" => {
+                let thrown = pending_exception.take().ok_or_else(|| {
+                    imported_error(format!(
+                        "f{} enters a catch handler without a pending exception",
+                        function.id.0
+                    ))
+                })?;
+                registers.insert(
+                    signed_operand(instruction, "exception")?,
+                    RegisterValue::ExceptionObject(Box::new(thrown.clone())),
+                );
+                registers.insert(signed_operand(instruction, "thrownValue")?, thrown);
+            }
+            "op_unreachable" => {
+                return Err(imported_error(format!(
+                    "f{} reached op_unreachable at byte {}",
+                    function.id.0, instruction.byte_offset
+                )));
             }
             "op_new_object" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -1182,7 +1240,9 @@ fn known_truthiness(
         | RegisterValue::Array(_)
         | RegisterValue::ConsoleObject
         | RegisterValue::ConsoleLog
-        | RegisterValue::Builtin(_) => Some(true),
+        | RegisterValue::Builtin(_)
+        | RegisterValue::ExceptionObject(_)
+        | RegisterValue::Error { .. } => Some(true),
         _ => None,
     };
     Ok(result)
@@ -1398,6 +1458,8 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
             | RegisterValue::ConsoleObject
             | RegisterValue::ConsoleLog
             | RegisterValue::Builtin(_)
+            | RegisterValue::ExceptionObject(_)
+            | RegisterValue::Error { .. }
             | RegisterValue::Undefined
             | RegisterValue::Null
             | RegisterValue::Boolean(_)
@@ -1425,6 +1487,8 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
                 | RegisterValue::Object(_)
                 | RegisterValue::Array(_)
                 | RegisterValue::ConsoleObject
+                | RegisterValue::ExceptionObject(_)
+                | RegisterValue::Error { .. }
         )),
         "op_typeof_is_function" => Some(matches!(
             value,
@@ -1455,6 +1519,8 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
                 | RegisterValue::ConsoleObject
                 | RegisterValue::ConsoleLog
                 | RegisterValue::Builtin(_)
+                | RegisterValue::ExceptionObject(_)
+                | RegisterValue::Error { .. }
         )),
         "op_is_callable" => Some(matches!(
             value,
@@ -1485,7 +1551,9 @@ fn known_typeof(value: &RegisterValue) -> Option<&'static str> {
         RegisterValue::Null
         | RegisterValue::Object(_)
         | RegisterValue::Array(_)
-        | RegisterValue::ConsoleObject => Some("object"),
+        | RegisterValue::ConsoleObject
+        | RegisterValue::ExceptionObject(_)
+        | RegisterValue::Error { .. } => Some("object"),
         _ => None,
     }
 }
@@ -1786,6 +1854,17 @@ fn static_get_property(
     base: &RegisterValue,
     key: StaticPropertyKey,
 ) -> Result<RegisterValue, LlvmError> {
+    if let RegisterValue::Error { kind, message } = base {
+        return match key {
+            StaticPropertyKey::Name(name) if name.as_ref() == "name" => {
+                Ok(RegisterValue::String(static_error_name(*kind).into()))
+            }
+            StaticPropertyKey::Name(name) if name.as_ref() == "message" => {
+                Ok(RegisterValue::String(message.clone()))
+            }
+            _ => Ok(RegisterValue::Undefined),
+        };
+    }
     let (id, is_array) = match base {
         RegisterValue::Object(id) => (*id, false),
         RegisterValue::Array(id) => (*id, true),
@@ -1825,6 +1904,22 @@ fn static_get_property(
             .cloned()
             .map(Ok)
             .unwrap_or_else(|| missing_static_property(&name, is_array)),
+    }
+}
+
+fn static_error_name(kind: u32) -> &'static str {
+    match kind {
+        0 => "Error",
+        1 => "EvalError",
+        2 => "RangeError",
+        3 => "ReferenceError",
+        4 => "SyntaxError",
+        5 => "TypeError",
+        6 => "URIError",
+        7 => "AggregateError",
+        8 => "SuppressedError",
+        9 => "OutOfMemoryError",
+        _ => "Error",
     }
 }
 

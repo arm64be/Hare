@@ -3,10 +3,10 @@ use core::ffi::c_void;
 use bun_core::String as BunString;
 use bun_options_types::Format;
 use hare_ir::{
-    ConstantSourceRepresentation, FunctionId, FunctionRelation, FunctionSpecialization,
-    HareImportError, ImportBuilder, ImportError, InputKind, OperandRole, OperandValue,
-    OwnedVisitorUnit, ParserDiagnostic, SourceId, SourceRecord, SourceText, VisitorConstant,
-    VisitorConstantValue,
+    ConstantSourceRepresentation, ExceptionHandlerKind, FunctionId, FunctionRelation,
+    FunctionSpecialization, HareImportError, ImportBuilder, ImportError, InputKind, OperandRole,
+    OperandValue, OwnedVisitorUnit, ParserDiagnostic, SourceId, SourceRecord, SourceText,
+    VisitorConstant, VisitorConstantValue,
 };
 
 const NO_PARENT: u32 = u32::MAX;
@@ -259,6 +259,35 @@ extern "C" fn Bun__Hare__visitorStringSwitchEntry(
             .as_mut()
             .ok_or_else(|| ImportError::VisitorRejected("missing import builder".into()))?
             .string_switch_entry(table_index, key, branch_offset, index_in_table)
+    })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorExceptionHandler(
+    context: *mut c_void,
+    index: u32,
+    start: u32,
+    end: u32,
+    target: u32,
+    kind: u32,
+) -> u32 {
+    callback_boundary(context, |context| {
+        let kind = match kind {
+            0 => ExceptionHandlerKind::Catch,
+            1 => ExceptionHandlerKind::Finally,
+            2 => ExceptionHandlerKind::SynthesizedCatch,
+            3 => ExceptionHandlerKind::SynthesizedFinally,
+            _ => {
+                return Err(ImportError::VisitorRejected(
+                    "invalid exception handler kind".into(),
+                ));
+            }
+        };
+        context
+            .builder
+            .as_mut()
+            .ok_or_else(|| ImportError::VisitorRejected("missing import builder".into()))?
+            .exception_handler(index, start, end, target, kind)
     })
 }
 

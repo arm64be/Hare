@@ -1,7 +1,8 @@
 use hare_ir::{
-    ConstantSourceRepresentation, DumpIdentity, FIRST_CONSTANT_REGISTER_INDEX, FunctionId,
-    FunctionRelation, FunctionSpecialization, ImportBuilder, InputKind, OperandRole, OperandValue,
-    SourceId, SourceRecord, SourceText, VisitorConstant, VisitorConstantValue, render_visitor_dump,
+    ConstantSourceRepresentation, DumpIdentity, ExceptionHandlerKind,
+    FIRST_CONSTANT_REGISTER_INDEX, FunctionId, FunctionRelation, FunctionSpecialization,
+    ImportBuilder, InputKind, OperandRole, OperandValue, SourceId, SourceRecord, SourceText,
+    VisitorConstant, VisitorConstantValue, render_visitor_dump,
 };
 
 #[test]
@@ -58,6 +59,9 @@ fn structural_import_is_owned_and_validated() {
     builder
         .string_switch_entry(0, SourceText::Latin1(Box::from(&b"a"[..])), 2, 0)
         .unwrap();
+    builder
+        .exception_handler(0, 0, 2, 0, ExceptionHandlerKind::Catch)
+        .unwrap();
     builder.instruction(0, 1, 2, 1, 1).unwrap();
     builder
         .operand(
@@ -93,5 +97,6 @@ fn structural_import_is_owned_and_validated() {
         first.find("string-switch-entry key=latin1:61").unwrap()
             < first.find("string-switch-entry key=latin1:7a").unwrap()
     );
+    assert!(first.contains("exception-handler h0 start=0 end=2 target=0 kind=Catch"));
     assert!(!first.contains("random-workspace"));
 }

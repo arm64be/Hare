@@ -141,6 +141,14 @@ pub fn render_visitor_dump(
                 .unwrap();
             }
         }
+        for (index, handler) in function.exception_handlers.iter().enumerate() {
+            writeln!(
+                output,
+                "  exception-handler h{index} start={} end={} target={} kind={:?}",
+                handler.start, handler.end, handler.target, handler.kind
+            )
+            .unwrap();
+        }
         for instruction in &function.instructions {
             writeln!(
                 output,

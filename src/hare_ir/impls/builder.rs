@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    CoverageState, FunctionId, FunctionRelation, FunctionSpecialization, HARE_IR_SCHEMA_VERSION,
-    ImportError, InputKind, OperandRole, OperandValue, OwnedVisitorUnit, PINNED_BUN_REVISION,
-    PINNED_WEBKIT_REVISION, SourceId, SourceRecord, SourceText, VisitorConstant, VisitorFunction,
-    VisitorInstruction, VisitorOperand, VisitorSimpleSwitchTable, VisitorStringSwitchEntry,
-    VisitorStringSwitchTable,
+    CoverageState, ExceptionHandlerKind, FunctionId, FunctionRelation, FunctionSpecialization,
+    HARE_IR_SCHEMA_VERSION, ImportError, InputKind, OperandRole, OperandValue, OwnedVisitorUnit,
+    PINNED_BUN_REVISION, PINNED_WEBKIT_REVISION, SourceId, SourceRecord, SourceText,
+    VisitorConstant, VisitorExceptionHandler, VisitorFunction, VisitorInstruction, VisitorOperand,
+    VisitorSimpleSwitchTable, VisitorStringSwitchEntry, VisitorStringSwitchTable,
 };
 
 /// Single-use builder populated by the sealed JSC bridge.
@@ -83,6 +83,7 @@ impl ImportBuilder {
             identifiers: Vec::new(),
             simple_switch_tables: Vec::new(),
             string_switch_tables: Vec::new(),
+            exception_handlers: Vec::new(),
             instruction_bytes,
             instructions: Vec::new(),
         });
@@ -189,6 +190,30 @@ impl ImportBuilder {
             key,
             branch_offset,
             index_in_table,
+        });
+        Ok(())
+    }
+
+    pub fn exception_handler(
+        &mut self,
+        index: u32,
+        start: u32,
+        end: u32,
+        target: u32,
+        kind: ExceptionHandlerKind,
+    ) -> Result<(), ImportError> {
+        let function_id = self
+            .active_function
+            .ok_or(ImportError::ExceptionHandlerWithoutFunction)?;
+        let function = &mut self.unit.functions[function_id.index()];
+        if usize::try_from(index).ok() != Some(function.exception_handlers.len()) {
+            return Err(ImportError::ExceptionHandlerOutOfOrder(index));
+        }
+        function.exception_handlers.push(VisitorExceptionHandler {
+            start,
+            end,
+            target,
+            kind,
         });
         Ok(())
     }

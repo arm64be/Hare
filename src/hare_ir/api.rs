@@ -209,6 +209,25 @@ pub struct VisitorStringSwitchTable {
     pub entries: Vec<VisitorStringSwitchEntry>,
 }
 
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExceptionHandlerKind {
+    Catch,
+    Finally,
+    SynthesizedCatch,
+    SynthesizedFinally,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VisitorExceptionHandler {
+    /// Inclusive bytecode offset covered by this handler.
+    pub start: u32,
+    /// Exclusive bytecode offset covered by this handler.
+    pub end: u32,
+    pub target: u32,
+    pub kind: ExceptionHandlerKind,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VisitorFunction {
     pub id: FunctionId,
@@ -232,6 +251,8 @@ pub struct VisitorFunction {
     pub identifiers: Vec<SourceText>,
     pub simple_switch_tables: Vec<VisitorSimpleSwitchTable>,
     pub string_switch_tables: Vec<VisitorStringSwitchTable>,
+    /// Kept in JSC's innermost-first search order.
+    pub exception_handlers: Vec<VisitorExceptionHandler>,
     pub instruction_bytes: u32,
     pub instructions: Vec<VisitorInstruction>,
 }
@@ -382,6 +403,29 @@ impl OwnedVisitorUnit {
                     return Err(ValidationError::MalformedStringSwitchTable {
                         function: function.id,
                         table: table_index as u32,
+                    });
+                }
+            }
+
+            let instruction_offsets = function
+                .instructions
+                .iter()
+                .map(|instruction| instruction.byte_offset)
+                .collect::<BTreeSet<_>>();
+            for (handler_index, handler) in function.exception_handlers.iter().enumerate() {
+                let start_is_instruction = instruction_offsets.contains(&handler.start);
+                let end_is_boundary = handler.end == function.instruction_bytes
+                    || instruction_offsets.contains(&handler.end);
+                let target_is_instruction = instruction_offsets.contains(&handler.target);
+                if handler.start >= handler.end
+                    || handler.end > function.instruction_bytes
+                    || !start_is_instruction
+                    || !end_is_boundary
+                    || !target_is_instruction
+                {
+                    return Err(ValidationError::MalformedExceptionHandler {
+                        function: function.id,
+                        handler: handler_index as u32,
                     });
                 }
             }
@@ -912,6 +956,8 @@ pub enum ImportError {
     StringSwitchTableOutOfOrder(u32),
     StringSwitchEntryWithoutTable(u32),
     StringSwitchEntryOverflow(u32),
+    ExceptionHandlerWithoutFunction,
+    ExceptionHandlerOutOfOrder(u32),
     OperandWithoutInstruction,
     DuplicateOperandManifest(Box<str>),
     CacheOperandCrossedBoundary(Box<str>),
@@ -987,6 +1033,10 @@ pub enum ValidationError {
     MalformedStringSwitchTable {
         function: FunctionId,
         table: u32,
+    },
+    MalformedExceptionHandler {
+        function: FunctionId,
+        handler: u32,
     },
     MalformedInstructionStream {
         function: FunctionId,

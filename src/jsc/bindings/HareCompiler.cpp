@@ -67,6 +67,8 @@ extern "C" uint32_t Bun__Hare__visitorBeginStringSwitchTable(
     void*, uint32_t, uint32_t, uint32_t, int32_t, uint32_t);
 extern "C" uint32_t Bun__Hare__visitorStringSwitchEntry(
     void*, uint32_t, const void*, size_t, uint32_t, int32_t, uint32_t);
+extern "C" uint32_t Bun__Hare__visitorExceptionHandler(
+    void*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
 extern "C" uint32_t Bun__Hare__visitorOperand(
     void*, const uint8_t*, size_t, uint32_t, uint32_t, int64_t, uint64_t);
 extern "C" uint32_t Bun__Hare__visitorParserError(
@@ -364,6 +366,21 @@ static bool visitSwitchTables(JSC::UnlinkedCodeBlock& block, void* visitorContex
     return true;
 }
 
+static bool visitExceptionHandlers(JSC::UnlinkedCodeBlock& block, void* visitorContext)
+{
+    size_t count = block.numberOfExceptionHandlers();
+    if (count > UINT32_MAX)
+        return false;
+    for (uint32_t index = 0; index < count; ++index) {
+        const auto& handler = block.exceptionHandler(index);
+        if (!Bun__Hare__visitorExceptionHandler(
+                visitorContext, index, handler.start, handler.end,
+                handler.target, handler.typeBits))
+            return false;
+    }
+    return true;
+}
+
 static ImportResult materializeChildren(
     JSC::VM& vm, FunctionRecords& records, uint32_t parentId,
     void* visitorContext)
@@ -461,6 +478,8 @@ static ImportResult visitRecords(JSC::VM& vm, const FunctionRecords& records, vo
             return result(ImportStatus::VisitorRejected, 2);
         if (!visitSwitchTables(*records[functionId]->block.get(), visitorContext))
             return result(ImportStatus::VisitorRejected, 7);
+        if (!visitExceptionHandlers(*records[functionId]->block.get(), visitorContext))
+            return result(ImportStatus::VisitorRejected, 8);
         if (!visitConstantsAndIdentifiers(
                 *records[functionId]->block.get(), visitorContext))
             return result(ImportStatus::VisitorRejected, 6);
