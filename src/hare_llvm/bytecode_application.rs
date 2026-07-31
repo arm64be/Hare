@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::rc::Rc;
@@ -145,6 +145,12 @@ enum RegisterValue {
     },
     Object(u32),
     Array(u32),
+    ArrayIteratorMethod,
+    ArrayIteratorNext,
+    ArrayIterator {
+        array_id: u32,
+        next_index: Rc<Cell<u32>>,
+    },
     Spread(Vec<Self>),
     Empty,
     Undefined,
@@ -986,6 +992,88 @@ fn lower_function(
                     .collect();
                 registers.insert(destination, RegisterValue::Spread(values));
             }
+            "op_iterator_open" => {
+                let iterator_register = signed_operand(instruction, "iterator")?;
+                let next_register = signed_operand(instruction, "next")?;
+                let method = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "symbolIterator")?,
+                )?;
+                let iterable = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "iterable")?,
+                )?;
+                let _stack_offset = unsigned_operand(instruction, "stackOffset")?;
+                let (RegisterValue::ArrayIteratorMethod, RegisterValue::Array(array_id)) =
+                    (method, iterable)
+                else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                registers.insert(
+                    iterator_register,
+                    RegisterValue::ArrayIterator {
+                        array_id,
+                        next_index: Rc::new(Cell::new(0)),
+                    },
+                );
+                registers.insert(next_register, RegisterValue::ArrayIteratorNext);
+            }
+            "op_iterator_next" => {
+                let done_register = signed_operand(instruction, "done")?;
+                let value_register = signed_operand(instruction, "value")?;
+                let iterable = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "iterable")?,
+                )?;
+                let next =
+                    read_register(function, &registers, signed_operand(instruction, "next")?)?;
+                let iterator = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "iterator")?,
+                )?;
+                let _stack_offset = unsigned_operand(instruction, "stackOffset")?;
+                let (
+                    RegisterValue::Array(expected_array_id),
+                    RegisterValue::ArrayIteratorNext,
+                    RegisterValue::ArrayIterator {
+                        array_id,
+                        next_index,
+                    },
+                ) = (iterable, next, iterator)
+                else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                if expected_array_id != array_id {
+                    return Err(imported_error(
+                        "array iterator is used with a different iterable",
+                    ));
+                }
+                let Some(StaticHeapEntry::Array {
+                    elements, length, ..
+                }) = state.heap.get(&array_id)
+                else {
+                    return Err(imported_error(
+                        "array iterator references a missing static array",
+                    ));
+                };
+                let index = next_index.get();
+                let done = index >= *length;
+                let value = if done {
+                    RegisterValue::Undefined
+                } else {
+                    next_index.set(index + 1);
+                    elements
+                        .get(&index)
+                        .map(StaticProperty::read)
+                        .unwrap_or(RegisterValue::Undefined)
+                };
+                registers.insert(done_register, RegisterValue::Boolean(done));
+                registers.insert(value_register, value);
+            }
             "op_new_array_with_spread" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let first = signed_operand(instruction, "argv")?;
@@ -1267,7 +1355,14 @@ fn lower_function(
                 let present = static_has_private_brand(&state.heap, &base, &brand)?;
                 registers.insert(destination, RegisterValue::Boolean(present));
             }
-            "op_new_func" | "op_new_func_exp" => {
+            "op_new_func"
+            | "op_new_func_exp"
+            | "op_new_generator_func"
+            | "op_new_generator_func_exp"
+            | "op_new_async_func"
+            | "op_new_async_func_exp"
+            | "op_new_async_generator_func"
+            | "op_new_async_generator_func_exp" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let index = unsigned_operand(instruction, "functionDecl")?;
                 let call = child_function(
@@ -3410,12 +3505,20 @@ fn child_function_optional(
     specialization: FunctionSpecialization,
 ) -> Option<FunctionId> {
     let relation_matches = |relation: &FunctionRelation| match (opcode, relation) {
-        ("op_new_func", FunctionRelation::Declaration { index: actual }) => {
-            u64::from(*actual) == index
-        }
-        ("op_new_func_exp", FunctionRelation::Expression { index: actual }) => {
-            u64::from(*actual) == index
-        }
+        (
+            "op_new_func"
+            | "op_new_generator_func"
+            | "op_new_async_func"
+            | "op_new_async_generator_func",
+            FunctionRelation::Declaration { index: actual },
+        ) => u64::from(*actual) == index,
+        (
+            "op_new_func_exp"
+            | "op_new_generator_func_exp"
+            | "op_new_async_func_exp"
+            | "op_new_async_generator_func_exp",
+            FunctionRelation::Expression { index: actual },
+        ) => u64::from(*actual) == index,
         _ => false,
     };
     unit.functions
@@ -3805,6 +3908,11 @@ fn static_get_property(
     base: &RegisterValue,
     key: StaticPropertyKey,
 ) -> Result<RegisterValue, LlvmError> {
+    if matches!(base, RegisterValue::Array(_))
+        && matches!(&key, StaticPropertyKey::Name(name) if name.as_ref() == "Symbol.iterator")
+    {
+        return Ok(RegisterValue::ArrayIteratorMethod);
+    }
     if let RegisterValue::Arguments(values) = base {
         return match key {
             StaticPropertyKey::Index(index) => Ok(values
