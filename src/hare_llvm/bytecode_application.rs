@@ -19,7 +19,15 @@ enum ScalarExpression {
     Multiply(Box<Self>, Box<Self>),
     Divide(Box<Self>, Box<Self>),
     Remainder(Box<Self>, Box<Self>),
+    BitAnd(Box<Self>, Box<Self>),
+    BitOr(Box<Self>, Box<Self>),
+    BitXor(Box<Self>, Box<Self>),
+    LeftShift(Box<Self>, Box<Self>),
+    RightShift(Box<Self>, Box<Self>),
+    UnsignedRightShift(Box<Self>, Box<Self>),
     Negate(Box<Self>),
+    BitNot(Box<Self>),
+    Unsigned(Box<Self>),
     Call {
         function: FunctionId,
         arguments: Vec<Self>,
@@ -212,7 +220,8 @@ fn lower_function(
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
             }
-            "op_add" | "op_sub" | "op_mul" | "op_div" | "op_mod" => {
+            "op_add" | "op_sub" | "op_mul" | "op_div" | "op_mod" | "op_bitand" | "op_bitor"
+            | "op_bitxor" | "op_lshift" | "op_rshift" | "op_urshift" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let left =
                     scalar_register(function, &registers, signed_operand(instruction, "lhs")?)?;
@@ -224,6 +233,14 @@ fn lower_function(
                     "op_mul" => ScalarExpression::Multiply(Box::new(left), Box::new(right)),
                     "op_div" => ScalarExpression::Divide(Box::new(left), Box::new(right)),
                     "op_mod" => ScalarExpression::Remainder(Box::new(left), Box::new(right)),
+                    "op_bitand" => ScalarExpression::BitAnd(Box::new(left), Box::new(right)),
+                    "op_bitor" => ScalarExpression::BitOr(Box::new(left), Box::new(right)),
+                    "op_bitxor" => ScalarExpression::BitXor(Box::new(left), Box::new(right)),
+                    "op_lshift" => ScalarExpression::LeftShift(Box::new(left), Box::new(right)),
+                    "op_rshift" => ScalarExpression::RightShift(Box::new(left), Box::new(right)),
+                    "op_urshift" => {
+                        ScalarExpression::UnsignedRightShift(Box::new(left), Box::new(right))
+                    }
                     _ => unreachable!(),
                 };
                 registers.insert(destination, RegisterValue::Scalar(expression));
@@ -239,6 +256,41 @@ fn lower_function(
                     destination,
                     RegisterValue::Scalar(ScalarExpression::Negate(Box::new(source))),
                 );
+            }
+            "op_bitnot" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let source = scalar_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "operand")?,
+                )?;
+                registers.insert(
+                    destination,
+                    RegisterValue::Scalar(ScalarExpression::BitNot(Box::new(source))),
+                );
+            }
+            "op_unsigned" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let source = scalar_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "operand")?,
+                )?;
+                registers.insert(
+                    destination,
+                    RegisterValue::Scalar(ScalarExpression::Unsigned(Box::new(source))),
+                );
+            }
+            "op_inc" | "op_dec" => {
+                let register = signed_operand(instruction, "srcDst")?;
+                let source = scalar_register(function, &registers, register)?;
+                let one = ScalarExpression::Integer(1);
+                let expression = if descriptor.opcode == "op_inc" {
+                    ScalarExpression::Add(Box::new(source), Box::new(one))
+                } else {
+                    ScalarExpression::Subtract(Box::new(source), Box::new(one))
+                };
+                registers.insert(register, RegisterValue::Scalar(expression));
             }
             "op_to_primitive" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -664,6 +716,33 @@ fn evaluate(
             }
             remainder
         }
+        ScalarExpression::BitAnd(left, right) => i64::from(
+            to_int32(evaluate(left, functions, arguments, depth)?)
+                & to_int32(evaluate(right, functions, arguments, depth)?),
+        ),
+        ScalarExpression::BitOr(left, right) => i64::from(
+            to_int32(evaluate(left, functions, arguments, depth)?)
+                | to_int32(evaluate(right, functions, arguments, depth)?),
+        ),
+        ScalarExpression::BitXor(left, right) => i64::from(
+            to_int32(evaluate(left, functions, arguments, depth)?)
+                ^ to_int32(evaluate(right, functions, arguments, depth)?),
+        ),
+        ScalarExpression::LeftShift(left, right) => {
+            let left = to_uint32(evaluate(left, functions, arguments, depth)?);
+            let shift = to_uint32(evaluate(right, functions, arguments, depth)?) & 31;
+            i64::from(left.wrapping_shl(shift) as i32)
+        }
+        ScalarExpression::RightShift(left, right) => {
+            let left = to_int32(evaluate(left, functions, arguments, depth)?);
+            let shift = to_uint32(evaluate(right, functions, arguments, depth)?) & 31;
+            i64::from(left >> shift)
+        }
+        ScalarExpression::UnsignedRightShift(left, right) => {
+            let left = to_uint32(evaluate(left, functions, arguments, depth)?);
+            let shift = to_uint32(evaluate(right, functions, arguments, depth)?) & 31;
+            i64::from(left >> shift)
+        }
         ScalarExpression::Negate(value) => {
             let value = evaluate(value, functions, arguments, depth)?;
             if value == 0 {
@@ -672,6 +751,12 @@ fn evaluate(
             value
                 .checked_neg()
                 .ok_or_else(|| imported_error("integer negation exceeds i64"))?
+        }
+        ScalarExpression::BitNot(value) => {
+            i64::from(!to_int32(evaluate(value, functions, arguments, depth)?))
+        }
+        ScalarExpression::Unsigned(value) => {
+            i64::from(to_uint32(evaluate(value, functions, arguments, depth)?))
         }
         ScalarExpression::Call {
             function,
@@ -701,6 +786,14 @@ fn evaluate(
         ));
     }
     Ok(result)
+}
+
+fn to_uint32(value: i64) -> u32 {
+    value.rem_euclid(1_i64 << 32) as u32
+}
+
+fn to_int32(value: i64) -> i32 {
+    to_uint32(value) as i32
 }
 
 fn emit_application(
@@ -839,6 +932,20 @@ impl<'a> ExpressionEmitter<'a> {
                 let _ = writeln!(self.output, "  {result} = sub i64 0, {value}");
                 Ok(result)
             }
+            ScalarExpression::BitNot(value) => {
+                let value = self.emit_i32(value)?;
+                let inverted = self.temporary();
+                let _ = writeln!(self.output, "  {inverted} = xor i32 {value}, -1");
+                let result = self.temporary();
+                let _ = writeln!(self.output, "  {result} = sext i32 {inverted} to i64");
+                Ok(result)
+            }
+            ScalarExpression::Unsigned(value) => {
+                let value = self.emit_i32(value)?;
+                let result = self.temporary();
+                let _ = writeln!(self.output, "  {result} = zext i32 {value} to i64");
+                Ok(result)
+            }
             ScalarExpression::Call {
                 function,
                 arguments,
@@ -875,7 +982,56 @@ impl<'a> ExpressionEmitter<'a> {
                 let _ = writeln!(self.output, "  {result} = {operation} i64 {left}, {right}");
                 Ok(result)
             }
+            ScalarExpression::BitAnd(left, right)
+            | ScalarExpression::BitOr(left, right)
+            | ScalarExpression::BitXor(left, right) => {
+                let left = self.emit_i32(left)?;
+                let right = self.emit_i32(right)?;
+                let operation = match expression {
+                    ScalarExpression::BitAnd(_, _) => "and",
+                    ScalarExpression::BitOr(_, _) => "or",
+                    ScalarExpression::BitXor(_, _) => "xor",
+                    _ => unreachable!(),
+                };
+                let raw = self.temporary();
+                let _ = writeln!(self.output, "  {raw} = {operation} i32 {left}, {right}");
+                let result = self.temporary();
+                let _ = writeln!(self.output, "  {result} = sext i32 {raw} to i64");
+                Ok(result)
+            }
+            ScalarExpression::LeftShift(left, right)
+            | ScalarExpression::RightShift(left, right)
+            | ScalarExpression::UnsignedRightShift(left, right) => {
+                let left = self.emit_i32(left)?;
+                let right = self.emit_i32(right)?;
+                let shift = self.temporary();
+                let _ = writeln!(self.output, "  {shift} = and i32 {right}, 31");
+                let operation = match expression {
+                    ScalarExpression::LeftShift(_, _) => "shl",
+                    ScalarExpression::RightShift(_, _) => "ashr",
+                    ScalarExpression::UnsignedRightShift(_, _) => "lshr",
+                    _ => unreachable!(),
+                };
+                let raw = self.temporary();
+                let _ = writeln!(self.output, "  {raw} = {operation} i32 {left}, {shift}");
+                let result = self.temporary();
+                let extension = if matches!(expression, ScalarExpression::UnsignedRightShift(_, _))
+                {
+                    "zext"
+                } else {
+                    "sext"
+                };
+                let _ = writeln!(self.output, "  {result} = {extension} i32 {raw} to i64");
+                Ok(result)
+            }
         }
+    }
+
+    fn emit_i32(&mut self, expression: &ScalarExpression) -> Result<String, LlvmError> {
+        let value = self.emit(expression)?;
+        let result = self.temporary();
+        let _ = writeln!(self.output, "  {result} = trunc i64 {value} to i32");
+        Ok(result)
     }
 }
 
@@ -960,5 +1116,48 @@ mod tests {
                 Err(LlvmError::ImportedApplication(_))
             ));
         }
+    }
+
+    #[test]
+    fn bitwise_graph_uses_javascript_i32_widths() {
+        let functions = BTreeMap::new();
+        let expressions = [
+            (
+                ScalarExpression::BitAnd(
+                    Box::new(ScalarExpression::Integer(29)),
+                    Box::new(ScalarExpression::Integer(15)),
+                ),
+                13,
+            ),
+            (
+                ScalarExpression::LeftShift(
+                    Box::new(ScalarExpression::Integer(1)),
+                    Box::new(ScalarExpression::Integer(31)),
+                ),
+                -2_147_483_648,
+            ),
+            (
+                ScalarExpression::UnsignedRightShift(
+                    Box::new(ScalarExpression::Integer(-2)),
+                    Box::new(ScalarExpression::Integer(1)),
+                ),
+                2_147_483_647,
+            ),
+            (
+                ScalarExpression::BitNot(Box::new(ScalarExpression::Integer(0))),
+                -1,
+            ),
+        ];
+        for (expression, expected) in &expressions {
+            assert_eq!(evaluate(expression, &functions, &[], 0).unwrap(), *expected);
+        }
+        let writes = expressions
+            .into_iter()
+            .map(|(expression, _)| NativeWrite::Integer(expression))
+            .collect::<Vec<_>>();
+        let ir = emit_application(TargetLayout::host().unwrap(), &functions, &writes).unwrap();
+        assert!(ir.contains(" = trunc i64 "));
+        assert!(ir.contains(" = lshr i32 "));
+        assert!(ir.contains(" = zext i32 "));
     }
 }

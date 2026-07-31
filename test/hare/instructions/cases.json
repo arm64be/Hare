@@ -35,6 +35,57 @@
     "source": "console.log(+true + +null); console.log(+undefined); console.log(-0);"
   },
   {
+    "id": "numeric.dynamic-integer-arithmetic",
+    "family": "numeric_coercion",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_new_func_exp",
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call",
+      "op_call_ignore_result",
+      "op_mul",
+      "op_sub",
+      "op_div",
+      "op_mod",
+      "op_negate",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "console.log((function (value) { return (value * 10 - 6) / 2; })(9)); console.log((function (value) { return value % 5; })(17)); console.log((function (value) { return -value; })(3));"
+  },
+  {
+    "id": "numeric.bitwise-and-update",
+    "family": "numeric_coercion",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_new_func_exp",
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call",
+      "op_call_ignore_result",
+      "op_bitand",
+      "op_bitor",
+      "op_bitxor",
+      "op_lshift",
+      "op_rshift",
+      "op_urshift",
+      "op_unsigned",
+      "op_bitnot",
+      "op_inc",
+      "op_dec",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "console.log((function (value) { return value & 15; })(29)); console.log((function (value) { return value | 16; })(3)); console.log((function (value) { return value ^ 7; })(10)); console.log((function (value) { return value << 2; })(3)); console.log((function (value) { return value >> 2; })(-16)); console.log((function (value) { return value >>> 1; })(-2)); console.log((function (value) { return ~value; })(0)); console.log((function (value) { value++; value--; return value; })(41));"
+  },
+  {
     "id": "numeric.string-concatenation",
     "family": "numeric_coercion",
     "lowering": "imported",
