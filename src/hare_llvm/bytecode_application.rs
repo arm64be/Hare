@@ -177,14 +177,67 @@ fn lower_function(
 
     let mut writes = Vec::new();
     let mut result = None;
-    for instruction in &function.instructions {
+    let instruction_indices = function
+        .instructions
+        .iter()
+        .enumerate()
+        .map(|(index, instruction)| (instruction.byte_offset, index))
+        .collect::<BTreeMap<_, _>>();
+    let mut instruction_index = 0;
+    let mut executed_instructions = 0_usize;
+    while let Some(instruction) = function.instructions.get(instruction_index) {
+        executed_instructions += 1;
+        if executed_instructions > function.instructions.len().saturating_mul(4).max(1) {
+            return Err(imported_error(format!(
+                "f{} requires a runtime control-flow loop",
+                function.id.0
+            )));
+        }
         if hare_frontend::cache_descriptor(instruction.opcode_id).is_some() {
+            instruction_index += 1;
             continue;
         }
         let descriptor = hare_frontend::descriptor(instruction.opcode_id)
             .ok_or_else(|| imported_error(format!("unknown opcode {}", instruction.opcode_id)))?;
         match descriptor.opcode {
             "op_enter" => {}
+            "op_jmp" => {
+                instruction_index = branch_target_index(instruction, &instruction_indices)?;
+                continue;
+            }
+            "op_jtrue" | "op_jfalse" => {
+                let condition = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "condition")?,
+                )?;
+                let truthy = known_truthiness(&condition)
+                    .ok_or_else(|| unsupported(function, instruction, descriptor.opcode))?;
+                let should_branch = if descriptor.opcode == "op_jtrue" {
+                    truthy
+                } else {
+                    !truthy
+                };
+                if should_branch {
+                    instruction_index = branch_target_index(instruction, &instruction_indices)?;
+                    continue;
+                }
+            }
+            "op_jeq_null" | "op_jneq_null" | "op_jundefined_or_null" | "op_jnundefined_or_null" => {
+                let value =
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                let is_nullish = known_unary_predicate("op_is_undefined_or_null", &value)
+                    .ok_or_else(|| unsupported(function, instruction, descriptor.opcode))?;
+                let should_branch = match descriptor.opcode {
+                    "op_jeq_null" | "op_jundefined_or_null" => is_nullish,
+                    "op_jneq_null" | "op_jnundefined_or_null" => !is_nullish,
+                    _ => unreachable!(),
+                };
+                if should_branch {
+                    instruction_index = branch_target_index(instruction, &instruction_indices)?;
+                    continue;
+                }
+            }
             "op_mov" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let source = signed_operand(instruction, "src")?;
@@ -444,6 +497,25 @@ fn lower_function(
                 };
                 registers.insert(destination, value);
             }
+            "op_to_string" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let value = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "operand")?,
+                )?;
+                let mut text = String::new();
+                append_js_string(&value, functions, &mut text)?;
+                registers.insert(destination, RegisterValue::String(text.into_boxed_str()));
+            }
+            "op_typeof" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let value =
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                let type_name = known_typeof(&value)
+                    .ok_or_else(|| unsupported(function, instruction, descriptor.opcode))?;
+                registers.insert(destination, RegisterValue::String(type_name.into()));
+            }
             "op_to_primitive" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let source =
@@ -558,11 +630,46 @@ fn lower_function(
                         if function.id.0 == 0 => {}
                     _ => return Err(unsupported(function, instruction, descriptor.opcode)),
                 }
+                break;
             }
             _ => return Err(unsupported(function, instruction, descriptor.opcode)),
         }
+        instruction_index += 1;
     }
     Ok(LoweredBody { result, writes })
+}
+
+fn branch_target_index(
+    instruction: &VisitorInstruction,
+    instruction_indices: &BTreeMap<u32, usize>,
+) -> Result<usize, LlvmError> {
+    let target = i64::from(instruction.byte_offset)
+        .checked_add(signed_operand(instruction, "targetLabel")?)
+        .and_then(|target| u32::try_from(target).ok())
+        .ok_or_else(|| imported_error("branch target leaves the instruction stream"))?;
+    instruction_indices
+        .get(&target)
+        .copied()
+        .ok_or_else(|| imported_error(format!("branch target {target} is not an instruction")))
+}
+
+fn known_truthiness(value: &RegisterValue) -> Option<bool> {
+    match value {
+        RegisterValue::Scalar(ScalarExpression::Integer(value)) => Some(*value != 0),
+        RegisterValue::BooleanScalar(ScalarExpression::Integer(value)) => Some(*value != 0),
+        RegisterValue::Boolean(value) => Some(*value),
+        RegisterValue::Undefined
+        | RegisterValue::Null
+        | RegisterValue::NaN
+        | RegisterValue::NegativeZero => Some(false),
+        RegisterValue::String(value) => Some(!value.is_empty()),
+        RegisterValue::PositiveInfinity
+        | RegisterValue::NegativeInfinity
+        | RegisterValue::Function(_)
+        | RegisterValue::ConsoleObject
+        | RegisterValue::ConsoleLog => Some(true),
+        _ => None,
+    }
 }
 
 fn call_register_values(
@@ -736,6 +843,22 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
             RegisterValue::Function(_) | RegisterValue::ConsoleLog => None,
             _ => Some(false),
         },
+        _ => None,
+    }
+}
+
+fn known_typeof(value: &RegisterValue) -> Option<&'static str> {
+    match value {
+        RegisterValue::Undefined => Some("undefined"),
+        RegisterValue::Boolean(_) | RegisterValue::BooleanScalar(_) => Some("boolean"),
+        RegisterValue::Scalar(_)
+        | RegisterValue::NaN
+        | RegisterValue::NegativeZero
+        | RegisterValue::PositiveInfinity
+        | RegisterValue::NegativeInfinity => Some("number"),
+        RegisterValue::String(_) | RegisterValue::Concatenation(_) => Some("string"),
+        RegisterValue::Function(_) | RegisterValue::ConsoleLog => Some("function"),
+        RegisterValue::Null | RegisterValue::ConsoleObject => Some("object"),
         _ => None,
     }
 }

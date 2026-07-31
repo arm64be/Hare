@@ -46,6 +46,17 @@ function readHareGraphFlags(executable: string): number {
 test.skipIf(!isLinux)(
   "Hare native scalar convergence matches the pinned JSC frontend",
   async () => {
+    const opcodeLines = (await Bun.file(join(import.meta.dir, "../../OPCODES.tsv")).text()).trimEnd().split("\n");
+    const opcodeHeaders = opcodeLines.shift()!.split("\t");
+    const opcodeNameIndex = opcodeHeaders.indexOf("opcode");
+    const opcodeIdIndex = opcodeHeaders.indexOf("opcode_id");
+    const classificationIndex = opcodeHeaders.indexOf("classification");
+    const semanticOpcodesById = new Map(
+      opcodeLines
+        .map(line => line.split("\t"))
+        .filter(columns => columns[classificationIndex] === "semantic")
+        .map(columns => [Number(columns[opcodeIdIndex]), columns[opcodeNameIndex]]),
+    );
     const source = cases.map(testCase => `// ${testCase.id}\n${testCase.source}`).join("\n");
     using dir = tempDir("hare-instruction-differential", { "reference.js": source });
 
@@ -99,6 +110,14 @@ test.skipIf(!isLinux)(
       false
       false
       true
+      false
+      true
+      15
+      number
+      12
+      5
+      6
+      9
       hare-42
       42
 
@@ -146,6 +165,16 @@ test.skipIf(!isLinux)(
       expect({ compileError, failedFunctionDump }).toEqual({ compileError: undefined, failedFunctionDump: "" });
       expect(compileStderr).toContain("hare-dump schema=1");
       expect(compileStderr).toContain("structurally_complete=true");
+      const claimedOpcodes = new Set(
+        cases.filter(testCase => testCase.lowering === lowering).flatMap(testCase => testCase.opcodes),
+      );
+      const dumpedOpcodes = new Set(
+        [...compileStderr.matchAll(/^  instruction offset=\d+ opcode=(\d+) /gm)]
+          .map(match => semanticOpcodesById.get(Number(match[1])))
+          .filter((opcode): opcode is string => opcode !== undefined),
+      );
+      expect([...claimedOpcodes].filter(opcode => !dumpedOpcodes.has(opcode)).sort()).toEqual([]);
+      expect([...dumpedOpcodes].filter(opcode => !claimedOpcodes.has(opcode)).sort()).toEqual([]);
       expect(readHareGraphFlags(executable) & (1 << 4)).toBe(1 << 4);
       expect(compileExitCode).toBe(0);
 

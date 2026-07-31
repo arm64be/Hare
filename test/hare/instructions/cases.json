@@ -159,6 +159,89 @@
     "source": "console.log((function (value) { return typeof value === \"undefined\"; })(1)); console.log((function (value) { return typeof value === \"object\"; })(1)); console.log((function (value) { return typeof value === \"function\"; })(1)); console.log((function (value) { return typeof value === \"boolean\"; })(1)); console.log((function (value) { return typeof value === \"number\"; })(1)); console.log((function (value) { return typeof value === \"bigint\"; })(1)); console.log((function (value) { return value == null; })(1)); console.log((function (value) { return value != null; })(1));"
   },
   {
+    "id": "numeric.unsigned-comparison",
+    "family": "numeric_coercion",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_new_func_exp",
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call",
+      "op_call_ignore_result",
+      "op_below",
+      "op_beloweq",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "console.log((function (left, right) { return (left >>> 0) < (right >>> 0); })(-1, 0)); console.log((function (left, right) { return (left >>> 0) <= (right >>> 0); })(-1, -1));"
+  },
+  {
+    "id": "numeric.postfix-to-numeric",
+    "family": "numeric_coercion",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_new_func_exp",
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call",
+      "op_call_ignore_result",
+      "op_to_numeric",
+      "op_inc",
+      "op_add",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "console.log((function (value) { const old = value++; return old + value; })(7));"
+  },
+  {
+    "id": "numeric.typeof-and-string",
+    "family": "numeric_coercion",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_new_func_exp",
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call",
+      "op_call_ignore_result",
+      "op_typeof",
+      "op_to_string",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "console.log(typeof (function (value) { return value; })(3)); console.log(`${(function (value) { return value; })(12)}`);"
+  },
+  {
+    "id": "numeric.known-control",
+    "family": "numeric_coercion",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_new_func_exp",
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call",
+      "op_call_ignore_result",
+      "op_is_number",
+      "op_jfalse",
+      "op_jnundefined_or_null",
+      "op_jmp",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "console.log((function (value) { return value ?? 99; })(5)); console.log((function (value) { return typeof value === \"number\" ? 6 : 7; })(1)); console.log((function (value) { return typeof value === \"string\" ? 8 : 9; })(1));"
+  },
+  {
     "id": "numeric.string-concatenation",
     "family": "numeric_coercion",
     "lowering": "imported",
