@@ -59,6 +59,9 @@ enum Builtin {
     CreatePrivateSymbol,
     EmptyPropertyNameEnumerator,
     Eval,
+    GeneratorNext,
+    GeneratorReturn,
+    GeneratorThrow,
     HasOwnPropertyFunction,
     Object,
     SentinelString,
@@ -85,6 +88,9 @@ fn builtin_is_callable(builtin: Builtin) -> bool {
         Builtin::Array
             | Builtin::CreatePrivateSymbol
             | Builtin::Eval
+            | Builtin::GeneratorNext
+            | Builtin::GeneratorReturn
+            | Builtin::GeneratorThrow
             | Builtin::HasOwnPropertyFunction
             | Builtin::Object
             | Builtin::SetPrototypeDirectOrThrow
@@ -877,13 +883,22 @@ fn lower_function(
                     "op_create_promise" | "op_new_promise" => InternalObjectKind::Promise,
                     _ => unreachable!(),
                 };
+                let mut fields = BTreeMap::new();
+                if matches!(
+                    kind,
+                    InternalObjectKind::Generator
+                        | InternalObjectKind::AsyncGenerator
+                        | InternalObjectKind::AsyncFunctionGenerator
+                ) {
+                    fields.insert(0, RegisterValue::Scalar(ScalarExpression::Integer(0)));
+                }
                 registers.insert(
                     destination,
                     RegisterValue::InternalObject {
                         identity: state.allocate_internal_object_identity()?,
                         kind,
                         prototype,
-                        fields: Rc::new(RefCell::new(BTreeMap::new())),
+                        fields: Rc::new(RefCell::new(fields)),
                     },
                 );
             }
@@ -3119,6 +3134,43 @@ fn lower_function(
                 let first = usize::try_from(signed_operand(instruction, "firstVarArg")?)
                     .map_err(|_| unsupported(function, instruction, descriptor.opcode))?;
                 let arguments = static_argument_values(&state.heap, &argument_list, first)?;
+                if matches!(
+                    callee_value,
+                    RegisterValue::Builtin(
+                        Builtin::GeneratorNext | Builtin::GeneratorReturn | Builtin::GeneratorThrow
+                    )
+                ) {
+                    let body = resume_static_generator(
+                        unit,
+                        functions,
+                        call_arities,
+                        callee_value,
+                        this_value,
+                        &arguments,
+                        state,
+                        call_depth,
+                    )?;
+                    writes.extend(body.writes);
+                    if let Some(thrown) = body.abrupt {
+                        if let Some(target) =
+                            static_exception_target(function, instruction, &instruction_indices)?
+                        {
+                            pending_exception = Some(thrown);
+                            instruction_index = target;
+                            continue;
+                        }
+                        abrupt = Some(thrown);
+                        break;
+                    }
+                    let value = body.result.unwrap_or(RegisterValue::Undefined);
+                    registers.insert(destination, value.clone());
+                    if descriptor.opcode == "op_tail_call_varargs" {
+                        result = Some(value);
+                        break;
+                    }
+                    instruction_index += 1;
+                    continue;
+                }
                 let RegisterValue::Function {
                     call: callee,
                     environment,
@@ -3244,6 +3296,44 @@ fn lower_function(
                             description,
                         },
                     );
+                    instruction_index += 1;
+                    continue;
+                }
+                if matches!(
+                    callee_value,
+                    RegisterValue::Builtin(
+                        Builtin::GeneratorNext | Builtin::GeneratorReturn | Builtin::GeneratorThrow
+                    )
+                ) {
+                    let arguments = call_register_values(function, instruction, &registers)?;
+                    let body = resume_static_generator(
+                        unit,
+                        functions,
+                        call_arities,
+                        callee_value,
+                        this_value,
+                        &arguments,
+                        state,
+                        call_depth,
+                    )?;
+                    writes.extend(body.writes);
+                    if let Some(thrown) = body.abrupt {
+                        if let Some(target) =
+                            static_exception_target(function, instruction, &instruction_indices)?
+                        {
+                            pending_exception = Some(thrown);
+                            instruction_index = target;
+                            continue;
+                        }
+                        abrupt = Some(thrown);
+                        break;
+                    }
+                    let value = body.result.unwrap_or(RegisterValue::Undefined);
+                    registers.insert(destination, value.clone());
+                    if descriptor.opcode == "op_tail_call" {
+                        result = Some(value);
+                        break;
+                    }
                     instruction_index += 1;
                     continue;
                 }
@@ -3388,6 +3478,36 @@ fn lower_function(
                         };
                         static_set_prototype(&mut state.heap, &base, prototype)?;
                     }
+                    RegisterValue::Builtin(
+                        Builtin::GeneratorNext | Builtin::GeneratorReturn | Builtin::GeneratorThrow,
+                    ) => {
+                        let this_value = call_this_value(function, instruction, &registers)?;
+                        let arguments = call_register_values(function, instruction, &registers)?;
+                        let body = resume_static_generator(
+                            unit,
+                            functions,
+                            call_arities,
+                            callee_value,
+                            this_value,
+                            &arguments,
+                            state,
+                            call_depth,
+                        )?;
+                        writes.extend(body.writes);
+                        if let Some(thrown) = body.abrupt {
+                            if let Some(target) = static_exception_target(
+                                function,
+                                instruction,
+                                &instruction_indices,
+                            )? {
+                                pending_exception = Some(thrown);
+                                instruction_index = target;
+                                continue;
+                            }
+                            abrupt = Some(thrown);
+                            break;
+                        }
+                    }
                     RegisterValue::Function {
                         call: callee,
                         environment,
@@ -3524,6 +3644,186 @@ fn resolve_static_property_read(
         ),
         value => Ok(value),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resume_static_generator(
+    unit: &OwnedVisitorUnit,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
+    call_arities: &BTreeMap<FunctionId, usize>,
+    method: RegisterValue,
+    receiver: RegisterValue,
+    arguments: &[RegisterValue],
+    state: &mut StaticExecutionState,
+    call_depth: usize,
+) -> Result<LoweredBody, LlvmError> {
+    let mode = match method {
+        RegisterValue::Builtin(Builtin::GeneratorNext) => 0,
+        RegisterValue::Builtin(Builtin::GeneratorReturn) => 1,
+        RegisterValue::Builtin(Builtin::GeneratorThrow) => 2,
+        _ => {
+            return Err(imported_error(
+                "generator resume callee is not a generator method",
+            ));
+        }
+    };
+    let RegisterValue::InternalObject {
+        kind: InternalObjectKind::Generator,
+        fields,
+        ..
+    } = &receiver
+    else {
+        return Ok(LoweredBody {
+            result: None,
+            writes: Vec::new(),
+            abrupt: Some(RegisterValue::Error {
+                kind: 5,
+                message: "|this| should be a generator".into(),
+            }),
+        });
+    };
+    let current_state = fields
+        .borrow()
+        .get(&0)
+        .cloned()
+        .unwrap_or(RegisterValue::Scalar(ScalarExpression::Integer(0)));
+    let RegisterValue::Scalar(current_state_expression) = current_state else {
+        return Err(imported_error("generator state is not an integer"));
+    };
+    if !expression_is_closed(&current_state_expression) {
+        return Err(imported_error("generator state is not statically closed"));
+    }
+    let current_state = evaluate(&current_state_expression, functions, &[], 0)?;
+    if current_state == -2 {
+        return Ok(LoweredBody {
+            result: None,
+            writes: Vec::new(),
+            abrupt: Some(RegisterValue::Error {
+                kind: 5,
+                message: "Generator is executing".into(),
+            }),
+        });
+    }
+
+    let mut input = arguments
+        .first()
+        .cloned()
+        .unwrap_or(RegisterValue::Undefined);
+    if current_state == -1 && mode == 2 {
+        return Ok(LoweredBody {
+            result: None,
+            writes: Vec::new(),
+            abrupt: Some(input),
+        });
+    }
+    if current_state == -1 && mode == 0 {
+        input = RegisterValue::Undefined;
+    }
+
+    let mut writes = Vec::new();
+    let value = if current_state == -1 {
+        input
+    } else {
+        let (next, this_value, frame) = {
+            let fields = fields.borrow();
+            (
+                fields.get(&1).cloned().ok_or_else(|| {
+                    imported_error("generator has no transformed body executable")
+                })?,
+                fields.get(&2).cloned().unwrap_or(RegisterValue::Undefined),
+                fields.get(&3).cloned().unwrap_or(RegisterValue::Undefined),
+            )
+        };
+        let RegisterValue::Function {
+            call, environment, ..
+        } = next.clone()
+        else {
+            return Err(imported_error(
+                "generator transformed body is not a static function",
+            ));
+        };
+        fields
+            .borrow_mut()
+            .insert(0, RegisterValue::Scalar(ScalarExpression::Integer(-2)));
+        let definition = unit
+            .functions
+            .get(call.index())
+            .ok_or_else(|| imported_error(format!("generator resumes missing f{}", call.0)))?;
+        let body_arguments = [
+            receiver.clone(),
+            RegisterValue::Scalar(ScalarExpression::Integer(current_state)),
+            input,
+            RegisterValue::Scalar(ScalarExpression::Integer(mode)),
+            frame,
+        ];
+        let body = lower_function(
+            unit,
+            definition,
+            functions,
+            call_arities,
+            Some(&body_arguments),
+            environment,
+            Some(this_value),
+            Some(next),
+            state,
+            call_depth + 1,
+        )?;
+        writes = body.writes;
+        if let Some(thrown) = body.abrupt {
+            fields
+                .borrow_mut()
+                .insert(0, RegisterValue::Scalar(ScalarExpression::Integer(-1)));
+            return Ok(LoweredBody {
+                result: None,
+                writes,
+                abrupt: Some(thrown),
+            });
+        }
+        body.result.unwrap_or(RegisterValue::Undefined)
+    };
+
+    let resumed_state = fields
+        .borrow()
+        .get(&0)
+        .cloned()
+        .unwrap_or(RegisterValue::Scalar(ScalarExpression::Integer(-2)));
+    let RegisterValue::Scalar(resumed_state_expression) = resumed_state else {
+        return Err(imported_error("resumed generator state is not an integer"));
+    };
+    if !expression_is_closed(&resumed_state_expression) {
+        return Err(imported_error(
+            "resumed generator state is not statically closed",
+        ));
+    }
+    let resumed_state = evaluate(&resumed_state_expression, functions, &[], 0)?;
+    let done = current_state == -1 || resumed_state == -2;
+    if done {
+        fields
+            .borrow_mut()
+            .insert(0, RegisterValue::Scalar(ScalarExpression::Integer(-1)));
+    }
+    let result_id = state.allocate_heap_id()?;
+    state.heap.insert(
+        result_id,
+        StaticHeapEntry::Object {
+            prototype: None,
+            properties: BTreeMap::from([
+                (
+                    "done".into(),
+                    StaticProperty::assigned(RegisterValue::Boolean(done)),
+                ),
+                ("value".into(), StaticProperty::assigned(value)),
+            ]),
+            property_order: vec!["value".into(), "done".into()],
+            private_properties: BTreeMap::new(),
+            private_brands: BTreeSet::new(),
+        },
+    );
+    Ok(LoweredBody {
+        result: Some(RegisterValue::Object(result_id)),
+        writes,
+        abrupt: None,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4986,6 +5286,22 @@ fn static_get_property(
     base: &RegisterValue,
     key: StaticPropertyKey,
 ) -> Result<RegisterValue, LlvmError> {
+    if let RegisterValue::InternalObject {
+        kind: InternalObjectKind::Generator,
+        ..
+    } = base
+        && let StaticPropertyKey::Name(name) = &key
+    {
+        let method = match name.as_ref() {
+            "next" => Some(Builtin::GeneratorNext),
+            "return" => Some(Builtin::GeneratorReturn),
+            "throw" => Some(Builtin::GeneratorThrow),
+            _ => None,
+        };
+        if let Some(method) = method {
+            return Ok(RegisterValue::Builtin(method));
+        }
+    }
     if matches!(base, RegisterValue::Array(_))
         && matches!(&key, StaticPropertyKey::Name(name) if name.as_ref() == "Symbol.iterator")
     {

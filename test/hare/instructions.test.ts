@@ -200,6 +200,18 @@ test.skipIf(!isLinux)(
       function
       function
       function
+      40
+      false
+      42
+      true
+      undefined
+      true
+      42
+      true
+      43
+      1
+      42
+      true
       42
       function
       42
