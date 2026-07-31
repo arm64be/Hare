@@ -737,6 +737,26 @@
     "source": "function h026MutableClosure(value) { return function () { value++; return value; }(); } console.log(h026MutableClosure(41));"
   },
   {
+    "id": "object.regexp-literal",
+    "family": "object_property",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_new_func",
+      "op_new_reg_exp",
+      "op_call",
+      "op_typeof",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call_ignore_result",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "function h026RegExp() { return /hare/i; } console.log(typeof h026RegExp());"
+  },
+  {
     "id": "locals.scalar-binding",
     "family": "locals",
     "lowering": "imported",

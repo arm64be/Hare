@@ -193,6 +193,9 @@ fn render_constant_value(value: &VisitorConstantValue) -> String {
         VisitorConstantValue::Int32(value) => format!("int32:{value}"),
         VisitorConstantValue::Float64Bits(value) => format!("float64-bits:{value:016x}"),
         VisitorConstantValue::String(value) => format!("string:{}", render_source_text(value)),
+        VisitorConstantValue::RegExp { pattern, flags } => {
+            format!("regexp:{} flags=0x{flags:08x}", render_source_text(pattern))
+        }
         VisitorConstantValue::LinkTimeConstant(name) => {
             format!("link-time-constant:{}", escaped(name))
         }

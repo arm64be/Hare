@@ -171,6 +171,10 @@ pub enum VisitorConstantValue {
     Int32(i32),
     Float64Bits(u64),
     String(SourceText),
+    RegExp {
+        pattern: SourceText,
+        flags: u32,
+    },
     /// Stable symbolic identity for a pinned JSC `LinkTimeConstant`.
     LinkTimeConstant(Box<str>),
     /// Address-free marker for a declarative cell whose fields have not yet

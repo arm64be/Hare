@@ -35,6 +35,7 @@ struct JSGeneratorTraits {
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ParserError.h>
+#include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/SourceCodeKey.h>
 #include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/StrongInlines.h>
@@ -59,6 +60,8 @@ extern "C" uint32_t Bun__Hare__visitorConstantScalar(
     void*, uint32_t, uint32_t, uint32_t, uint64_t);
 extern "C" uint32_t Bun__Hare__visitorConstantText(
     void*, uint32_t, uint32_t, uint32_t, const void*, size_t, uint32_t);
+extern "C" uint32_t Bun__Hare__visitorRegExpConstant(
+    void*, uint32_t, uint32_t, const void*, size_t, uint32_t, uint32_t);
 extern "C" uint32_t Bun__Hare__visitorIdentifier(
     void*, uint32_t, const void*, size_t, uint32_t);
 extern "C" uint32_t Bun__Hare__visitorSimpleSwitchTable(
@@ -236,6 +239,24 @@ static bool emitLinkTimeConstant(
     return false;
 }
 
+static bool emitRegExpConstant(
+    void* visitorContext, uint32_t index,
+    JSC::SourceCodeRepresentation sourceRepresentation, JSC::RegExp& regexp)
+{
+    const WTF::String& pattern = regexp.pattern();
+    uint32_t flags = static_cast<uint32_t>(regexp.flags().toRaw());
+    if (pattern.is8Bit()) {
+        auto span = pattern.span8();
+        return Bun__Hare__visitorRegExpConstant(
+            visitorContext, index, static_cast<uint32_t>(sourceRepresentation),
+            span.data(), span.size(), 1, flags);
+    }
+    auto span = pattern.span16();
+    return Bun__Hare__visitorRegExpConstant(
+        visitorContext, index, static_cast<uint32_t>(sourceRepresentation),
+        span.data(), span.size(), 0, flags);
+}
+
 static bool visitConstantsAndIdentifiers(
     JSC::UnlinkedCodeBlock& block, void* visitorContext)
 {
@@ -275,6 +296,12 @@ static bool visitConstantsAndIdentifiers(
             if (string.isNull()
                 || !emitCopiedText(
                     visitorContext, index, 6, sourceRepresentation, string))
+                return false;
+            ++index;
+            continue;
+        } else if (auto* regexp = dynamicDowncast<JSC::RegExp>(value)) {
+            if (!emitRegExpConstant(
+                    visitorContext, index, sourceRepresentation, *regexp))
                 return false;
             ++index;
             continue;

@@ -87,6 +87,15 @@ enum RegisterValue {
         environment: Option<StaticEnvironmentRef>,
         identity: u32,
     },
+    RegExpTemplate {
+        pattern: SourceText,
+        flags: u32,
+    },
+    RegExp {
+        pattern: SourceText,
+        flags: u32,
+        identity: u32,
+    },
     Environment(StaticEnvironmentRef),
     ConsoleScope,
     NaNScope,
@@ -559,6 +568,26 @@ fn lower_function(
                     },
                 );
                 registers.insert(destination, RegisterValue::Object(id));
+            }
+            "op_new_reg_exp" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let template =
+                    read_register(function, &registers, signed_operand(instruction, "regexp")?)?;
+                let RegisterValue::RegExpTemplate { pattern, flags } = template else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let identity = next_heap_id;
+                next_heap_id = next_heap_id
+                    .checked_add(1)
+                    .ok_or_else(|| imported_error("static heap id overflow"))?;
+                registers.insert(
+                    destination,
+                    RegisterValue::RegExp {
+                        pattern,
+                        flags,
+                        identity,
+                    },
+                );
             }
             "op_create_direct_arguments"
             | "op_create_scoped_arguments"
@@ -1565,6 +1594,7 @@ fn known_truthiness(
         RegisterValue::PositiveInfinity
         | RegisterValue::NegativeInfinity
         | RegisterValue::Function { .. }
+        | RegisterValue::RegExp { .. }
         | RegisterValue::Object(_)
         | RegisterValue::Array(_)
         | RegisterValue::ConsoleObject
@@ -1673,6 +1703,12 @@ fn known_strict_equality(
                 identity: right, ..
             },
         ) => Some(left == right),
+        (
+            RegisterValue::RegExp { identity: left, .. },
+            RegisterValue::RegExp {
+                identity: right, ..
+            },
+        ) => Some(left == right),
         (RegisterValue::Object(left), RegisterValue::Object(right))
         | (RegisterValue::Array(left), RegisterValue::Array(right)) => Some(left == right),
         (RegisterValue::Builtin(left), RegisterValue::Builtin(right)) => Some(left == right),
@@ -1703,7 +1739,8 @@ fn known_js_type(value: &RegisterValue) -> Option<&'static str> {
         RegisterValue::Function { .. } | RegisterValue::ConsoleLog | RegisterValue::Builtin(_) => {
             Some("function")
         }
-        RegisterValue::Object(_)
+        RegisterValue::RegExp { .. }
+        | RegisterValue::Object(_)
         | RegisterValue::Array(_)
         | RegisterValue::Arguments(_)
         | RegisterValue::ConsoleObject
@@ -1793,6 +1830,10 @@ fn read_register(
             VisitorConstantValue::String(value) => {
                 RegisterValue::String(source_text_to_string(value)?.into_boxed_str())
             }
+            VisitorConstantValue::RegExp { pattern, flags } => RegisterValue::RegExpTemplate {
+                pattern: pattern.clone(),
+                flags: *flags,
+            },
             VisitorConstantValue::LinkTimeConstant(name) => match name.as_ref() {
                 "Array" => RegisterValue::Builtin(Builtin::Array),
                 "emptyPropertyNameEnumerator" => {
@@ -1836,6 +1877,7 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
             | RegisterValue::String(_)
             | RegisterValue::Concatenation(_)
             | RegisterValue::Function { .. }
+            | RegisterValue::RegExp { .. }
             | RegisterValue::Object(_)
             | RegisterValue::Array(_)
             | RegisterValue::ConsoleObject
@@ -1868,6 +1910,7 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
         "op_typeof_is_object" => Some(matches!(
             value,
             RegisterValue::Null
+                | RegisterValue::RegExp { .. }
                 | RegisterValue::Object(_)
                 | RegisterValue::Array(_)
                 | RegisterValue::Arguments(_)
@@ -1899,6 +1942,7 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
         "op_is_object" => Some(matches!(
             value,
             RegisterValue::Function { .. }
+                | RegisterValue::RegExp { .. }
                 | RegisterValue::Object(_)
                 | RegisterValue::Array(_)
                 | RegisterValue::Arguments(_)
@@ -1935,6 +1979,7 @@ fn known_typeof(value: &RegisterValue) -> Option<&'static str> {
             Some("function")
         }
         RegisterValue::Null
+        | RegisterValue::RegExp { .. }
         | RegisterValue::Object(_)
         | RegisterValue::Array(_)
         | RegisterValue::Arguments(_)

@@ -437,6 +437,35 @@ extern "C" fn Bun__Hare__visitorConstantText(
 }
 
 #[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorRegExpConstant(
+    context: *mut c_void,
+    index: u32,
+    source_representation: u32,
+    pattern_data: *const c_void,
+    pattern_length: usize,
+    pattern_is_latin1: u32,
+    flags: u32,
+) -> u32 {
+    callback_boundary(context, |context| {
+        let source_representation = constant_source_representation(source_representation)?;
+        // SAFETY: the C++ visitor keeps the RegExp pattern alive for this
+        // synchronous callback and `copy_source_text` owns the copy.
+        let pattern = unsafe { copy_source_text(pattern_data, pattern_length, pattern_is_latin1)? };
+        context
+            .builder
+            .as_mut()
+            .ok_or_else(|| ImportError::VisitorRejected("missing import builder".into()))?
+            .constant(
+                index,
+                VisitorConstant {
+                    value: VisitorConstantValue::RegExp { pattern, flags },
+                    source_representation,
+                },
+            )
+    })
+}
+
+#[unsafe(no_mangle)]
 extern "C" fn Bun__Hare__visitorIdentifier(
     context: *mut c_void,
     index: u32,
