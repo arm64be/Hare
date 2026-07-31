@@ -55,6 +55,18 @@ scripts/hare/generate-hare-frontend.rb
 scripts/hare/generate-hare-frontend.rb --check
 ```
 
+## Builtin and runtime feature inventory
+
+`generate-hare-builtins.rb` follows Bun's internal-module registry inputs,
+native-module macros, isolated builtin functions, JS-to-native bridge calls,
+runtime API source trees, and build-time-only eval helpers. It emits the H022
+feature inventory and refuses source, symbol, count, or content-hash drift.
+
+```sh
+scripts/hare/generate-hare-builtins.rb
+scripts/hare/generate-hare-builtins.rb --check
+```
+
 ## Effect provenance manifest
 
 `generate-effect-manifest.py` verifies Hare's exact `effect@3.22.0` root pin,

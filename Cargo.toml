@@ -70,6 +70,7 @@ members = [
   "src/jsc",
   "src/hare_ir",
   "src/hare_analysis",
+  "src/hare_builtins",
   "src/hare_effect",
   "src/hare_frontend",
   "src/hare_llvm",
@@ -435,6 +436,7 @@ bun_windows_sys = { path = "src/windows_sys" }
 bun_jsc = { path = "src/jsc" }
 hare_ir = { path = "src/hare_ir" }
 hare_analysis = { path = "src/hare_analysis" }
+hare_builtins = { path = "src/hare_builtins" }
 hare_effect = { path = "src/hare_effect" }
 hare_frontend = { path = "src/hare_frontend" }
 hare_llvm = { path = "src/hare_llvm" }
