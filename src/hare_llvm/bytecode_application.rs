@@ -234,13 +234,28 @@ fn lower_function(
                     &registers,
                     signed_operand(instruction, "condition")?,
                 )?;
-                let truthy = known_truthiness(&condition)
+                let truthy = known_truthiness(&condition, functions)?
                     .ok_or_else(|| unsupported(function, instruction, descriptor.opcode))?;
                 let should_branch = if descriptor.opcode == "op_jtrue" {
                     truthy
                 } else {
                     !truthy
                 };
+                if should_branch {
+                    instruction_index = branch_target_index(instruction, &instruction_indices)?;
+                    continue;
+                }
+            }
+            "op_jeq" | "op_jstricteq" | "op_jneq" | "op_jnstricteq" | "op_jless" | "op_jlesseq"
+            | "op_jgreater" | "op_jgreatereq" | "op_jnless" | "op_jnlesseq" | "op_jngreater"
+            | "op_jngreatereq" | "op_jbelow" | "op_jbeloweq" => {
+                let left =
+                    read_register(function, &registers, signed_operand(instruction, "lhs")?)?;
+                let right =
+                    read_register(function, &registers, signed_operand(instruction, "rhs")?)?;
+                let should_branch =
+                    known_branch_comparison(descriptor.opcode, &left, &right, functions)?
+                        .ok_or_else(|| unsupported(function, instruction, descriptor.opcode))?;
                 if should_branch {
                     instruction_index = branch_target_index(instruction, &instruction_indices)?;
                     continue;
@@ -885,10 +900,16 @@ fn branch_target_index(
         .ok_or_else(|| imported_error(format!("branch target {target} is not an instruction")))
 }
 
-fn known_truthiness(value: &RegisterValue) -> Option<bool> {
-    match value {
-        RegisterValue::Scalar(ScalarExpression::Integer(value)) => Some(*value != 0),
-        RegisterValue::BooleanScalar(ScalarExpression::Integer(value)) => Some(*value != 0),
+fn known_truthiness(
+    value: &RegisterValue,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
+) -> Result<Option<bool>, LlvmError> {
+    let result = match value {
+        RegisterValue::Scalar(expression) | RegisterValue::BooleanScalar(expression)
+            if expression_is_closed(expression) =>
+        {
+            Some(evaluate(expression, functions, &[], 0)? != 0)
+        }
         RegisterValue::Boolean(value) => Some(*value),
         RegisterValue::Undefined
         | RegisterValue::Null
@@ -903,7 +924,74 @@ fn known_truthiness(value: &RegisterValue) -> Option<bool> {
         | RegisterValue::ConsoleObject
         | RegisterValue::ConsoleLog => Some(true),
         _ => None,
+    };
+    Ok(result)
+}
+
+fn expression_is_closed(expression: &ScalarExpression) -> bool {
+    match expression {
+        ScalarExpression::Integer(_) => true,
+        ScalarExpression::Parameter(_) => false,
+        ScalarExpression::Negate(value)
+        | ScalarExpression::BitNot(value)
+        | ScalarExpression::Unsigned(value)
+        | ScalarExpression::LogicalNot(value) => expression_is_closed(value),
+        ScalarExpression::Add(left, right)
+        | ScalarExpression::Subtract(left, right)
+        | ScalarExpression::Multiply(left, right)
+        | ScalarExpression::Divide(left, right)
+        | ScalarExpression::Remainder(left, right)
+        | ScalarExpression::Power(left, right)
+        | ScalarExpression::BitAnd(left, right)
+        | ScalarExpression::BitOr(left, right)
+        | ScalarExpression::BitXor(left, right)
+        | ScalarExpression::LeftShift(left, right)
+        | ScalarExpression::RightShift(left, right)
+        | ScalarExpression::UnsignedRightShift(left, right)
+        | ScalarExpression::Equal(left, right)
+        | ScalarExpression::NotEqual(left, right)
+        | ScalarExpression::Less(left, right)
+        | ScalarExpression::LessEqual(left, right)
+        | ScalarExpression::Greater(left, right)
+        | ScalarExpression::GreaterEqual(left, right)
+        | ScalarExpression::Below(left, right)
+        | ScalarExpression::BelowEqual(left, right) => {
+            expression_is_closed(left) && expression_is_closed(right)
+        }
+        ScalarExpression::Call { arguments, .. } => arguments.iter().all(expression_is_closed),
     }
+}
+
+fn known_branch_comparison(
+    opcode: &str,
+    left: &RegisterValue,
+    right: &RegisterValue,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
+) -> Result<Option<bool>, LlvmError> {
+    let (RegisterValue::Scalar(left), RegisterValue::Scalar(right)) = (left, right) else {
+        return Ok(None);
+    };
+    if !expression_is_closed(left) || !expression_is_closed(right) {
+        return Ok(None);
+    }
+    let left = evaluate(left, functions, &[], 0)?;
+    let right = evaluate(right, functions, &[], 0)?;
+    let result = match opcode {
+        "op_jeq" | "op_jstricteq" => left == right,
+        "op_jneq" | "op_jnstricteq" => left != right,
+        "op_jless" => left < right,
+        "op_jlesseq" => left <= right,
+        "op_jgreater" => left > right,
+        "op_jgreatereq" => left >= right,
+        "op_jnless" => left >= right,
+        "op_jnlesseq" => left > right,
+        "op_jngreater" => left <= right,
+        "op_jngreatereq" => left < right,
+        "op_jbelow" => to_uint32(left) < to_uint32(right),
+        "op_jbeloweq" => to_uint32(left) <= to_uint32(right),
+        _ => return Ok(None),
+    };
+    Ok(Some(result))
 }
 
 fn call_register_values(
