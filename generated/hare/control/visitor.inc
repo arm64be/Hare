@@ -4,13 +4,13 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jneq_ptr.specialPointer", 34, 0, static_cast<int64_t>(decoded.m_specialPointer.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jneq_ptr.targetLabel", 31, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jneq_ptr.targetLabel", 31, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
     case JSC::op_jmp: {
         auto decoded = instruction->as<JSC::OpJmp>();
-        if (!emitSignedOperand(visitorContext, "operand.op_jmp.targetLabel", 26, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jmp.targetLabel", 26, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -18,7 +18,7 @@
         auto decoded = instruction->as<JSC::OpJtrue>();
         if (!emitSignedOperand(visitorContext, "operand.op_jtrue.condition", 26, 0, static_cast<int64_t>(decoded.m_condition.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jtrue.targetLabel", 28, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jtrue.targetLabel", 28, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -26,7 +26,7 @@
         auto decoded = instruction->as<JSC::OpJfalse>();
         if (!emitSignedOperand(visitorContext, "operand.op_jfalse.condition", 27, 0, static_cast<int64_t>(decoded.m_condition.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jfalse.targetLabel", 29, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jfalse.targetLabel", 29, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -34,7 +34,7 @@
         auto decoded = instruction->as<JSC::OpJeqNull>();
         if (!emitSignedOperand(visitorContext, "operand.op_jeq_null.value", 25, 0, static_cast<int64_t>(decoded.m_value.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jeq_null.targetLabel", 31, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jeq_null.targetLabel", 31, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -42,7 +42,7 @@
         auto decoded = instruction->as<JSC::OpJneqNull>();
         if (!emitSignedOperand(visitorContext, "operand.op_jneq_null.value", 26, 0, static_cast<int64_t>(decoded.m_value.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jneq_null.targetLabel", 32, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jneq_null.targetLabel", 32, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -50,7 +50,7 @@
         auto decoded = instruction->as<JSC::OpJundefinedOrNull>();
         if (!emitSignedOperand(visitorContext, "operand.op_jundefined_or_null.value", 35, 0, static_cast<int64_t>(decoded.m_value.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jundefined_or_null.targetLabel", 41, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jundefined_or_null.targetLabel", 41, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -58,7 +58,7 @@
         auto decoded = instruction->as<JSC::OpJnundefinedOrNull>();
         if (!emitSignedOperand(visitorContext, "operand.op_jnundefined_or_null.value", 36, 0, static_cast<int64_t>(decoded.m_value.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jnundefined_or_null.targetLabel", 42, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jnundefined_or_null.targetLabel", 42, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -68,7 +68,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jeq_ptr.specialPointer", 33, 0, static_cast<int64_t>(decoded.m_specialPointer.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jeq_ptr.targetLabel", 30, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jeq_ptr.targetLabel", 30, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -78,7 +78,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jeq.rhs", 18, 0, static_cast<int64_t>(decoded.m_rhs.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jeq.targetLabel", 26, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jeq.targetLabel", 26, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -88,7 +88,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jstricteq.rhs", 24, 0, static_cast<int64_t>(decoded.m_rhs.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jstricteq.targetLabel", 32, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jstricteq.targetLabel", 32, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -98,7 +98,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jneq.rhs", 19, 0, static_cast<int64_t>(decoded.m_rhs.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jneq.targetLabel", 27, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jneq.targetLabel", 27, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -108,7 +108,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jnstricteq.rhs", 25, 0, static_cast<int64_t>(decoded.m_rhs.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jnstricteq.targetLabel", 33, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jnstricteq.targetLabel", 33, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -118,7 +118,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jless.rhs", 20, 0, static_cast<int64_t>(decoded.m_rhs.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jless.targetLabel", 28, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jless.targetLabel", 28, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -128,7 +128,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jlesseq.rhs", 22, 0, static_cast<int64_t>(decoded.m_rhs.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jlesseq.targetLabel", 30, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jlesseq.targetLabel", 30, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -138,7 +138,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jgreater.rhs", 23, 0, static_cast<int64_t>(decoded.m_rhs.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jgreater.targetLabel", 31, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jgreater.targetLabel", 31, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -148,7 +148,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jgreatereq.rhs", 25, 0, static_cast<int64_t>(decoded.m_rhs.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jgreatereq.targetLabel", 33, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jgreatereq.targetLabel", 33, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -158,7 +158,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jnless.rhs", 21, 0, static_cast<int64_t>(decoded.m_rhs.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jnless.targetLabel", 29, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jnless.targetLabel", 29, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -168,7 +168,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jnlesseq.rhs", 23, 0, static_cast<int64_t>(decoded.m_rhs.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jnlesseq.targetLabel", 31, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jnlesseq.targetLabel", 31, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -178,7 +178,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jngreater.rhs", 24, 0, static_cast<int64_t>(decoded.m_rhs.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jngreater.targetLabel", 32, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jngreater.targetLabel", 32, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -188,7 +188,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jngreatereq.rhs", 26, 0, static_cast<int64_t>(decoded.m_rhs.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jngreatereq.targetLabel", 34, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jngreatereq.targetLabel", 34, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -198,7 +198,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jbelow.rhs", 21, 0, static_cast<int64_t>(decoded.m_rhs.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jbelow.targetLabel", 29, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jbelow.targetLabel", 29, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }
@@ -208,7 +208,7 @@
             return false;
         if (!emitSignedOperand(visitorContext, "operand.op_jbeloweq.rhs", 23, 0, static_cast<int64_t>(decoded.m_rhs.offset())))
             return false;
-        if (!emitSignedOperand(visitorContext, "operand.op_jbeloweq.targetLabel", 31, 5, static_cast<int64_t>(decoded.m_targetLabel.target())))
+        if (!emitSignedOperand(visitorContext, "operand.op_jbeloweq.targetLabel", 31, 5, static_cast<int64_t>(decoded.m_targetLabel.target() ? decoded.m_targetLabel.target() : block.outOfLineJumpOffset(instructionRef))))
             return false;
         return true;
     }

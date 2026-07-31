@@ -194,8 +194,11 @@ static bool emitBooleanOperand(
 }
 
 static bool visitInstructionOperands(
-    const JSC::JSInstruction* instruction, void* visitorContext)
+    JSC::UnlinkedCodeBlock& block,
+    const JSC::JSInstructionStream::Ref& instructionRef,
+    void* visitorContext)
 {
+    const JSC::JSInstruction* instruction = instructionRef.ptr();
     switch (instruction->opcodeID()) {
 #include "../../../generated/hare/control/visitor.inc"
 #include "../../../generated/hare/numeric/visitor.inc"
@@ -605,7 +608,7 @@ static ImportResult visitRecords(JSC::VM& vm, const FunctionRecords& records, vo
             {
                 auto* block = records[functionId]->block.get();
                 auto instruction = block->instructions().at(offset);
-                if (!visitInstructionOperands(instruction.ptr(), visitorContext))
+                if (!visitInstructionOperands(*block, instruction, visitorContext))
                     return result(ImportStatus::VisitorRejected, 5);
             }
             offset += encodedSize;
