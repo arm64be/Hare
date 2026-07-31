@@ -1058,6 +1058,33 @@ fn lower_function(
                 let present = static_has_private_property(&state.heap, &base, &property)?;
                 registers.insert(destination, RegisterValue::Boolean(present));
             }
+            "op_set_private_brand" => {
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let brand =
+                    read_register(function, &registers, signed_operand(instruction, "brand")?)?;
+                static_set_private_brand(&mut state.heap, &base, &brand)?;
+            }
+            "op_check_private_brand" => {
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let brand =
+                    read_register(function, &registers, signed_operand(instruction, "brand")?)?;
+                if !static_has_private_brand(&state.heap, &base, &brand)? {
+                    return Err(imported_error(
+                        "private method access failed its brand check",
+                    ));
+                }
+            }
+            "op_has_private_brand" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let brand =
+                    read_register(function, &registers, signed_operand(instruction, "brand")?)?;
+                let present = static_has_private_brand(&state.heap, &base, &brand)?;
+                registers.insert(destination, RegisterValue::Boolean(present));
+            }
             "op_new_func" | "op_new_func_exp" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let index = unsigned_operand(instruction, "functionDecl")?;
@@ -1863,15 +1890,20 @@ fn lower_function(
                     RegisterValue::Builtin(Builtin::CreatePrivateSymbol)
                 ) {
                     let arguments = call_register_values(function, instruction, &registers)?;
-                    let [RegisterValue::String(description)] = arguments.as_slice() else {
+                    let [description] = arguments.as_slice() else {
                         return Err(unsupported(function, instruction, descriptor.opcode));
+                    };
+                    let description = match description {
+                        RegisterValue::String(description) => description.clone(),
+                        RegisterValue::Boolean(true) => "#private-brand".into(),
+                        _ => return Err(unsupported(function, instruction, descriptor.opcode)),
                     };
                     let identity = state.allocate_private_name_identity()?;
                     registers.insert(
                         destination,
                         RegisterValue::PrivateName {
                             identity,
-                            description: description.clone(),
+                            description,
                         },
                     );
                     instruction_index += 1;
@@ -3307,6 +3339,67 @@ fn static_has_private_property(
 ) -> Result<bool, LlvmError> {
     let identity = private_name_identity(property)?;
     Ok(static_private_properties(heap, base)?.contains_key(&identity))
+}
+
+fn static_private_brands<'a>(
+    heap: &'a BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+) -> Result<&'a BTreeSet<u32>, LlvmError> {
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
+        _ => return Err(imported_error("private brand base is not a static object")),
+    };
+    match heap
+        .get(&id)
+        .ok_or_else(|| imported_error("private brand references a missing static heap entry"))?
+    {
+        StaticHeapEntry::Object { private_brands, .. }
+        | StaticHeapEntry::Array { private_brands, .. }
+        | StaticHeapEntry::Function { private_brands, .. } => Ok(private_brands),
+    }
+}
+
+fn static_private_brands_mut<'a>(
+    heap: &'a mut BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+) -> Result<&'a mut BTreeSet<u32>, LlvmError> {
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
+        _ => return Err(imported_error("private brand base is not a static object")),
+    };
+    match heap
+        .get_mut(&id)
+        .ok_or_else(|| imported_error("private brand references a missing static heap entry"))?
+    {
+        StaticHeapEntry::Object { private_brands, .. }
+        | StaticHeapEntry::Array { private_brands, .. }
+        | StaticHeapEntry::Function { private_brands, .. } => Ok(private_brands),
+    }
+}
+
+fn static_set_private_brand(
+    heap: &mut BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    brand: &RegisterValue,
+) -> Result<(), LlvmError> {
+    let identity = private_name_identity(brand)?;
+    if !static_private_brands_mut(heap, base)?.insert(identity) {
+        return Err(imported_error(
+            "private brand initialization encountered an existing brand",
+        ));
+    }
+    Ok(())
+}
+
+fn static_has_private_brand(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    brand: &RegisterValue,
+) -> Result<bool, LlvmError> {
+    let identity = private_name_identity(brand)?;
+    Ok(static_private_brands(heap, base)?.contains(&identity))
 }
 
 fn static_lookup_property(
