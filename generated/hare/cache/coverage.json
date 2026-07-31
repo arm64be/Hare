@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "owner_task": "H006",
+  "family": "encoding_or_dispatch",
+  "opcode_count": 11,
+  "semantic_operand_count": 0,
+  "cache_only_operand_count": 11,
+  "instruction_record_count": 4,
+  "opcode_ids": [
+    23,
+    24,
+    92,
+    117,
+    123,
+    124,
+    127,
+    128,
+    129,
+    130,
+    131
+  ],
+  "manifest_sha256": "7c59a920c7d2b45932abb4ff16b65230ae3ed94fe0b27fba47fffa0f7c249de0",
+  "opcodes_sha256": "c8773a5f0c2ab2cce59c02914dfd27e470ca7daac15ed606660180a53ed47fae"
+}

@@ -11,6 +11,8 @@
     "effect_policy": "conservative importer ceiling derived from pinned opcode family and value-flow definitions; H009 IR and H010/H018 helper manifests must preserve or refine it with accepted semantic proof",
     "generated_structs": "Source/JavaScriptCore/bytecode/BytecodeStructs.h",
     "generated_ids": "Source/JavaScriptCore/bytecode/Bytecodes.h",
+    "sdk_compatibility_header": "Source/JavaScriptCore/bytecompiler/BytecodeGeneratorBase.h",
+    "sdk_traits_source": "Source/JavaScriptCore/bytecompiler/BytecodeGenerator.h",
     "width_rules": [
       "Source/JavaScriptCore/bytecode/OpcodeSize.h",
       "Source/JavaScriptCore/bytecode/Fits.h",
@@ -73,6 +75,18 @@
     {
       "path": "Source/JavaScriptCore/bytecode/Instruction.h",
       "sha256": "aef89a718c4dfaafeaa3685dd9a74e23372f4c68834d956a33f02e5802e427f8"
+    },
+    {
+      "path": "Source/JavaScriptCore/bytecompiler/BytecodeGeneratorBase.h",
+      "sha256": "40d777589886aadd55a07fb1f947783fba81e22d954a4280f26128172526ea3a"
+    },
+    {
+      "path": "Source/JavaScriptCore/bytecompiler/BytecodeGenerator.h",
+      "sha256": "8e1b0027b6bd596608a774ff0af5b382782631a9d7d643e8a3b8508b571d6c04"
+    },
+    {
+      "path": "Source/JavaScriptCore/bytecompiler/ProfileTypeBytecodeFlag.h",
+      "sha256": "0aab21497965dee42ed55e1b5d593bf6f9c28069f0a207b8161d77d43c4de689"
     },
     {
       "path": "Source/JavaScriptCore/bytecode/OpcodeSize.h",

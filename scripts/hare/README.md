@@ -25,6 +25,7 @@ git clone --filter=blob:none --no-checkout \
   https://github.com/oven-sh/WebKit.git tmp/hare-webkit
 git -C tmp/hare-webkit sparse-checkout set --no-cone \
   /Source/JavaScriptCore/bytecode/ \
+  /Source/JavaScriptCore/bytecompiler/ \
   /Source/JavaScriptCore/generator/ \
   /Source/JavaScriptCore/runtime/CachedTypes.cpp \
   /Source/JavaScriptCore/runtime/CodeCache.cpp \
@@ -41,6 +42,18 @@ The generator refuses another revision, modified pinned inputs, count drift,
 an unclassified C++ boundary member, a semantic row without extraction and
 validation destinations, a semantic opcode without an effect ceiling, or a
 cache-only row consumed as program meaning.
+
+`generate-hare-frontend.rb` consumes those two committed inventories and emits
+the six typed W2 family tables plus the protected C++ accessor switch. It also
+pins the private WebKit headers absent from the packaged JSC SDK, accounts for
+all 183 semantic opcodes, 529 semantic operands, 80 excluded cache operands,
+183 checkpoint/temporary/derived/metadata records, and 11 excluded dispatch
+opcodes, and refuses any owner, type, role, effect, or count drift:
+
+```sh
+scripts/hare/generate-hare-frontend.rb
+scripts/hare/generate-hare-frontend.rb --check
+```
 
 ## Effect provenance manifest
 

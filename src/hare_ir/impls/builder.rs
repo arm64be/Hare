@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 
 use crate::{
     CoverageState, FunctionId, FunctionRelation, FunctionSpecialization, HARE_IR_SCHEMA_VERSION,
-    ImportError, InputKind, OwnedVisitorUnit, PINNED_BUN_REVISION, PINNED_WEBKIT_REVISION,
-    SourceId, SourceRecord, VisitorFunction, VisitorInstruction,
+    ImportError, InputKind, OperandRole, OperandValue, OwnedVisitorUnit, PINNED_BUN_REVISION,
+    PINNED_WEBKIT_REVISION, SourceId, SourceRecord, VisitorFunction, VisitorInstruction,
+    VisitorOperand,
 };
 
 /// Single-use builder populated by the sealed JSC bridge.
@@ -125,6 +126,39 @@ impl ImportBuilder {
 
     pub fn mark_definition(&mut self, manifest_id: Box<str>, state: CoverageState) {
         self.unit.definition_coverage.insert(manifest_id, state);
+    }
+
+    pub fn operand(
+        &mut self,
+        manifest_id: Box<str>,
+        role: OperandRole,
+        value: OperandValue,
+    ) -> Result<(), ImportError> {
+        let function_id = self
+            .active_function
+            .ok_or(ImportError::OperandWithoutInstruction)?;
+        let instruction = self
+            .unit
+            .functions
+            .get_mut(function_id.index())
+            .and_then(|function| function.instructions.last_mut())
+            .ok_or(ImportError::OperandWithoutInstruction)?;
+        if role == OperandRole::CacheOnly || value == OperandValue::Excluded {
+            return Err(ImportError::CacheOperandCrossedBoundary(manifest_id));
+        }
+        if instruction
+            .operands
+            .iter()
+            .any(|operand| operand.manifest_id == manifest_id)
+        {
+            return Err(ImportError::DuplicateOperandManifest(manifest_id));
+        }
+        instruction.operands.push(VisitorOperand {
+            manifest_id,
+            role,
+            value,
+        });
+        Ok(())
     }
 
     pub fn mark_structurally_complete(&mut self) {

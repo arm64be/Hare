@@ -20,7 +20,7 @@ describe("Bun.build compile", () => {
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toMatch(
-      /Hare frontend imported \d+ owned function\(s\) for \.\/app\.js; native application lowering is not yet converged/,
+      /Hare frontend imported \d+ owned function\(s\) and validated \d+ semantic instruction\(s\) \(\d+ cache-only excluded\) for \.\/app\.js; native application lowering is not yet converged/,
     );
     expect(existsSync(outfile)).toBe(false);
     expect(exitCode).toBe(1);

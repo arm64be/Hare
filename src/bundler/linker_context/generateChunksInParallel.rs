@@ -1037,11 +1037,21 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 &code_result.buffer,
                                 &mut source_provider_url,
                             ) {
-                                Ok(unit) => format!(
-                                    "Hare frontend imported {} owned function(s) for {}; native application lowering is not yet converged",
-                                    unit.functions.len(),
-                                    bstr::BStr::new(&chunk.final_rel_path)
-                                ),
+                                Ok(unit) => {
+                                    match crate::bundle_v2::dispatch::validate_hare_import(&unit) {
+                                        Ok(coverage) => format!(
+                                            "Hare frontend imported {} owned function(s) and validated {} semantic instruction(s) ({} cache-only excluded) for {}; native application lowering is not yet converged",
+                                            unit.functions.len(),
+                                            coverage.semantic_instructions,
+                                            coverage.excluded_cache_instructions,
+                                            bstr::BStr::new(&chunk.final_rel_path)
+                                        ),
+                                        Err(error) => format!(
+                                            "Hare frontend validation failed for {}: {error}",
+                                            bstr::BStr::new(&chunk.final_rel_path)
+                                        ),
+                                    }
+                                }
                                 Err(error) => format!(
                                     "Hare frontend import failed for {}: {error}",
                                     bstr::BStr::new(&chunk.final_rel_path)

@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 hare_ir.workspace = true
+hare_frontend.workspace = true
 bytemuck = "1"
 bun_opaque.workspace = true
 bun_dispatch.workspace = true

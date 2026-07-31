@@ -364,6 +364,7 @@ dependencies = [
  "const_format",
  "enum-map",
  "enumset",
+ "hare_frontend",
  "hare_ir",
  "libc",
  "lol_html",
@@ -2735,6 +2736,13 @@ dependencies = [
 
 [[package]]
 name = "hare_analysis"
+version = "0.0.0"
+dependencies = [
+ "hare_ir",
+]
+
+[[package]]
+name = "hare_frontend"
 version = "0.0.0"
 dependencies = [
  "hare_ir",

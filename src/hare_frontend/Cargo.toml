@@ -1,0 +1,13 @@
+[package]
+name = "hare_frontend"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+hare_ir.workspace = true
+
+[lints]
+workspace = true

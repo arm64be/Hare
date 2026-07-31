@@ -1406,6 +1406,13 @@ pub mod bv2_impl {
             __bun_jsc_import_hare(format, source, source_provider_url)
         }
 
+        #[inline]
+        pub(crate) fn validate_hare_import(
+            unit: &hare_ir::OwnedVisitorUnit,
+        ) -> Result<hare_frontend::ImportCoverage, hare_frontend::FrontendError> {
+            hare_frontend::validate_imported_unit(unit)
+        }
+
         /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` — the
         /// concrete struct lives in `bun_runtime` (its fields name `Config`/
         /// `Plugin`/`HTMLBundle::Route`). The bundler reads exactly two things

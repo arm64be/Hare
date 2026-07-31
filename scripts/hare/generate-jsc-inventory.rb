@@ -29,6 +29,9 @@ SOURCE_PATHS = [
   "Source/JavaScriptCore/generator/Type.rb",
   "Source/JavaScriptCore/bytecode/Fits.h",
   "Source/JavaScriptCore/bytecode/Instruction.h",
+  "Source/JavaScriptCore/bytecompiler/BytecodeGeneratorBase.h",
+  "Source/JavaScriptCore/bytecompiler/BytecodeGenerator.h",
+  "Source/JavaScriptCore/bytecompiler/ProfileTypeBytecodeFlag.h",
   "Source/JavaScriptCore/bytecode/OpcodeSize.h",
   "Source/JavaScriptCore/bytecode/HandlerInfo.h",
   "Source/JavaScriptCore/bytecode/ExpressionInfo.h",
@@ -1740,6 +1743,8 @@ manifest = {
     "effect_policy" => "conservative importer ceiling derived from pinned opcode family and value-flow definitions; H009 IR and H010/H018 helper manifests must preserve or refine it with accepted semantic proof",
     "generated_structs" => "Source/JavaScriptCore/bytecode/BytecodeStructs.h",
     "generated_ids" => "Source/JavaScriptCore/bytecode/Bytecodes.h",
+    "sdk_compatibility_header" => "Source/JavaScriptCore/bytecompiler/BytecodeGeneratorBase.h",
+    "sdk_traits_source" => "Source/JavaScriptCore/bytecompiler/BytecodeGenerator.h",
     "width_rules" => [width_path, fits_path, instruction_path],
     "boundary_evidence" => [
       code_block_path,

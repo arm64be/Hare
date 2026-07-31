@@ -4,7 +4,27 @@
 #include "ZigSourceProvider.h"
 #include "helpers.h"
 
+#include <memory>
+#include <JavaScriptCore/Instruction.h>
+
+namespace JSC {
+struct OpNop;
+class UnlinkedCodeBlockGenerator;
+
+// The packaged JSC SDK omits BytecodeGenerator.h, but its generated typed
+// accessors instantiate BoundLabel::target() through this pinned traits shape.
+struct JSGeneratorTraits {
+    using OpcodeTraits = JSOpcodeTraits;
+    using OpcodeID = ::JSC::OpcodeID;
+    using OpNop = ::JSC::OpNop;
+    using CodeBlock = std::unique_ptr<UnlinkedCodeBlockGenerator>;
+    using InstructionType = JSInstruction;
+    static constexpr OpcodeID opcodeForDisablingOptimizations = op_debug;
+};
+}
+
 #include <JavaScriptCore/CodeCache.h>
+#include <JavaScriptCore/BytecodeStructs.h>
 #include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/InstructionStream.h>
 #include <JavaScriptCore/ParserError.h>
@@ -19,7 +39,6 @@
 #include <JavaScriptCore/UnlinkedModuleProgramCodeBlock.h>
 #include <JavaScriptCore/UnlinkedProgramCodeBlock.h>
 #include <new>
-#include <memory>
 #include <wtf/Vector.h>
 
 extern "C" uint32_t Bun__Hare__visitorBeginFunction(
@@ -28,6 +47,8 @@ extern "C" uint32_t Bun__Hare__visitorBeginFunction(
     int32_t, int32_t, uint32_t);
 extern "C" uint32_t Bun__Hare__visitorInstruction(
     void*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+extern "C" uint32_t Bun__Hare__visitorOperand(
+    void*, const uint8_t*, size_t, uint32_t, uint32_t, int64_t, uint64_t);
 extern "C" uint32_t Bun__Hare__visitorParserError(
     void*, uint32_t, uint32_t, int32_t, uint32_t, const void*, size_t, uint32_t);
 extern "C" uint64_t Bun__Hare__nativeProbe(uint64_t);
@@ -110,6 +131,49 @@ static ImportResult emitParserError(void* visitorContext, const JSC::ParserError
     }
     return accepted ? result(ImportStatus::ParserError)
                     : result(ImportStatus::VisitorRejected, 1);
+}
+
+static bool emitSignedOperand(
+    void* visitorContext, const char* manifestId, size_t manifestIdLength,
+    uint32_t role, int64_t value)
+{
+    return Bun__Hare__visitorOperand(
+        visitorContext, reinterpret_cast<const uint8_t*>(manifestId),
+        manifestIdLength, role, 0, value, 0);
+}
+
+static bool emitUnsignedOperand(
+    void* visitorContext, const char* manifestId, size_t manifestIdLength,
+    uint32_t role, uint64_t value)
+{
+    return Bun__Hare__visitorOperand(
+        visitorContext, reinterpret_cast<const uint8_t*>(manifestId),
+        manifestIdLength, role, 1, 0, value);
+}
+
+static bool emitBooleanOperand(
+    void* visitorContext, const char* manifestId, size_t manifestIdLength,
+    uint32_t role, bool value)
+{
+    return Bun__Hare__visitorOperand(
+        visitorContext, reinterpret_cast<const uint8_t*>(manifestId),
+        manifestIdLength, role, 2, 0, value ? 1 : 0);
+}
+
+static bool visitInstructionOperands(
+    const JSC::JSInstruction* instruction, void* visitorContext)
+{
+    switch (instruction->opcodeID()) {
+#include "../../../generated/hare/control/visitor.inc"
+#include "../../../generated/hare/numeric/visitor.inc"
+#include "../../../generated/hare/object/visitor.inc"
+#include "../../../generated/hare/function/visitor.inc"
+#include "../../../generated/hare/exception/visitor.inc"
+#include "../../../generated/hare/module/visitor.inc"
+#include "../../../generated/hare/cache/visitor.inc"
+    default:
+        return false;
+    }
 }
 
 static ImportResult materializeChildren(
@@ -223,6 +287,12 @@ static ImportResult visitRecords(JSC::VM& vm, const FunctionRecords& records, vo
                     visitorContext, offset, opcodeId, encodedSize,
                     opcodeIdBytes, widthBytes))
                 return result(ImportStatus::VisitorRejected, 4);
+            {
+                auto* block = records[functionId]->block.get();
+                auto instruction = block->instructions().at(offset);
+                if (!visitInstructionOperands(instruction.ptr(), visitorContext))
+                    return result(ImportStatus::VisitorRejected, 5);
+            }
             offset += encodedSize;
         }
     }

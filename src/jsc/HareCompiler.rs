@@ -4,7 +4,8 @@ use bun_core::String as BunString;
 use bun_options_types::Format;
 use hare_ir::{
     FunctionId, FunctionRelation, FunctionSpecialization, HareImportError, ImportBuilder,
-    ImportError, InputKind, OwnedVisitorUnit, ParserDiagnostic, SourceId, SourceRecord, SourceText,
+    ImportError, InputKind, OperandRole, OperandValue, OwnedVisitorUnit, ParserDiagnostic,
+    SourceId, SourceRecord, SourceText,
 };
 
 const NO_PARENT: u32 = u32::MAX;
@@ -178,6 +179,73 @@ extern "C" fn Bun__Hare__visitorInstruction(
             opcode_id_bytes,
             width_bytes,
         )
+    })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorOperand(
+    context: *mut c_void,
+    manifest_id_data: *const u8,
+    manifest_id_len: usize,
+    role: u32,
+    value_kind: u32,
+    signed_value: i64,
+    unsigned_value: u64,
+) -> u32 {
+    if context.is_null() || manifest_id_data.is_null() || manifest_id_len == 0 {
+        return 0;
+    }
+    callback_boundary(context, |context| {
+        // SAFETY: generated C++ passes a static ASCII manifest-ID span and the
+        // callback copies it before returning.
+        let manifest_id = unsafe { core::slice::from_raw_parts(manifest_id_data, manifest_id_len) };
+        let manifest_id = core::str::from_utf8(manifest_id)
+            .map_err(|_| ImportError::VisitorRejected("invalid operand manifest ID".into()))?
+            .into();
+        let role = match role {
+            0 => OperandRole::ValueUse,
+            1 => OperandRole::ValueDefinition,
+            2 => OperandRole::ValueUseDefinition,
+            3 => OperandRole::RegisterRangeUse,
+            4 => OperandRole::ConstantOrRegister,
+            5 => OperandRole::ControlTarget,
+            6 => OperandRole::ArgumentCount,
+            7 => OperandRole::ArgumentIndex,
+            8 => OperandRole::ArgumentRangeBase,
+            9 => OperandRole::IdentifierIndex,
+            10 => OperandRole::FunctionIndex,
+            11 => OperandRole::SwitchTableIndex,
+            12 => OperandRole::BitVectorIndex,
+            13 => OperandRole::FrameSlotBase,
+            14 => OperandRole::ElementOrFieldIndex,
+            15 => OperandRole::LexicalFeatureFlags,
+            16 => OperandRole::PropertyAttributes,
+            17 => OperandRole::StructureFlags,
+            18 => OperandRole::ScopeDepth,
+            19 => OperandRole::ScopeSlotIndex,
+            20 => OperandRole::SymbolTableOrScopeDepth,
+            21 => OperandRole::ResumePoint,
+            22 => OperandRole::ModeOrFlags,
+            23 => OperandRole::BooleanControl,
+            24 => OperandRole::Count,
+            _ => return Err(ImportError::VisitorRejected("invalid operand role".into())),
+        };
+        let value = match value_kind {
+            0 => OperandValue::Signed(signed_value),
+            1 => OperandValue::Unsigned(unsigned_value),
+            2 => OperandValue::Boolean(unsigned_value != 0),
+            _ => {
+                return Err(ImportError::VisitorRejected(
+                    "invalid operand value kind".into(),
+                ));
+            }
+        };
+        let Some(builder) = context.builder.as_mut() else {
+            return Err(ImportError::VisitorRejected(
+                "missing import builder".into(),
+            ));
+        };
+        builder.operand(manifest_id, role, value)
     })
 }
 

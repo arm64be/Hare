@@ -93,6 +93,7 @@ pub struct SourceSpan {
     pub column: u32,
 }
 
+#[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OperandRole {
     ValueUse,
@@ -269,6 +270,23 @@ impl OwnedVisitorUnit {
                         function: function.id,
                         offset: instruction.byte_offset,
                     });
+                }
+                let mut operand_ids = BTreeSet::new();
+                for operand in &instruction.operands {
+                    if !operand_ids.insert(operand.manifest_id.as_ref()) {
+                        return Err(ValidationError::DuplicateOperandManifest {
+                            function: function.id,
+                            offset: instruction.byte_offset,
+                        });
+                    }
+                    if operand.role == OperandRole::CacheOnly
+                        || operand.value == OperandValue::Excluded
+                    {
+                        return Err(ValidationError::CacheOperandCrossedBoundary {
+                            function: function.id,
+                            offset: instruction.byte_offset,
+                        });
+                    }
                 }
                 expected_offset = expected_offset
                     .checked_add(instruction.encoded_size)
@@ -451,6 +469,18 @@ impl EffectSet {
     pub const READS_AMBIENT: Self = Self(1 << 9);
     pub const WRITES_AMBIENT: Self = Self(1 << 10);
     pub const OWNERSHIP_TRANSITION: Self = Self(1 << 11);
+    pub const READS_FRAME: Self = Self(1 << 12);
+    pub const WRITES_FRAME: Self = Self(1 << 13);
+    pub const REALM_ACCESS: Self = Self(1 << 14);
+    pub const SCOPE_ACCESS: Self = Self(1 << 15);
+    pub const CONTROL_FLOW: Self = Self(1 << 16);
+    pub const TRAP: Self = Self(1 << 17);
+    pub const INTERRUPTION_CHECK: Self = Self(1 << 18);
+    pub const EXCEPTION_STATE_READ: Self = Self(1 << 19);
+
+    pub const fn from_bits(bits: u64) -> Self {
+        Self(bits)
+    }
 
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -710,6 +740,9 @@ pub enum ImportError {
     InstructionWithoutFunction,
     InstructionOffset { expected: u32, actual: u32 },
     InvalidInstructionWidth(u32),
+    OperandWithoutInstruction,
+    DuplicateOperandManifest(Box<str>),
+    CacheOperandCrossedBoundary(Box<str>),
     IntegerOverflow,
     VisitorRejected(Box<str>),
     Validation(ValidationError),
@@ -785,6 +818,14 @@ pub enum ValidationError {
         function: FunctionId,
         expected: u32,
         actual: u32,
+    },
+    DuplicateOperandManifest {
+        function: FunctionId,
+        offset: u32,
+    },
+    CacheOperandCrossedBoundary {
+        function: FunctionId,
+        offset: u32,
     },
     UnknownEntryPoint(FunctionId),
     NonDenseBlockId {
