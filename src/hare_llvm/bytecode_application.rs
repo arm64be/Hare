@@ -1503,6 +1503,31 @@ fn lower_function(
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
             }
+            "op_get_by_id_with_this" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let receiver = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "thisValue")?,
+                )?;
+                let property = StaticPropertyKey::Name(identifier_string(
+                    function,
+                    unsigned_operand(instruction, "property")?,
+                )?);
+                let value = static_get_property(&state.heap, &base, property)?;
+                let value = resolve_static_property_read(
+                    unit,
+                    functions,
+                    call_arities,
+                    value,
+                    receiver,
+                    state,
+                    call_depth,
+                )?;
+                registers.insert(destination, value);
+            }
             "op_get_length" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let base =
@@ -1735,6 +1760,33 @@ fn lower_function(
                 )?;
                 registers.insert(destination, value);
             }
+            "op_get_by_val_with_this" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let receiver = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "thisValue")?,
+                )?;
+                let property = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "property")?,
+                )?;
+                let property = static_property_key(&property, functions)?;
+                let value = static_get_property(&state.heap, &base, property)?;
+                let value = resolve_static_property_read(
+                    unit,
+                    functions,
+                    call_arities,
+                    value,
+                    receiver,
+                    state,
+                    call_depth,
+                )?;
+                registers.insert(destination, value);
+            }
             "op_put_by_val" | "op_put_by_val_direct" => {
                 let base =
                     read_register(function, &registers, signed_operand(instruction, "base")?)?;
@@ -1762,6 +1814,48 @@ fn lower_function(
                         call_depth,
                     )?;
                 }
+            }
+            "op_put_by_id_with_this" | "op_put_by_val_with_this" => {
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let receiver = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "thisValue")?,
+                )?;
+                let property = if descriptor.opcode == "op_put_by_id_with_this" {
+                    StaticPropertyKey::Name(identifier_string(
+                        function,
+                        unsigned_operand(instruction, "property")?,
+                    )?)
+                } else {
+                    let property = read_register(
+                        function,
+                        &registers,
+                        signed_operand(instruction, "property")?,
+                    )?;
+                    static_property_key(&property, functions)?
+                };
+                let value =
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                let _ecma_mode = unsigned_operand(instruction, "ecmaMode")?;
+                let assignment = static_set_property_with_receiver(
+                    &mut state.heap,
+                    &base,
+                    &receiver,
+                    property,
+                    value.clone(),
+                )?;
+                apply_static_property_assignment(
+                    unit,
+                    functions,
+                    call_arities,
+                    assignment,
+                    receiver,
+                    value,
+                    state,
+                    call_depth,
+                )?;
             }
             "op_in_by_id" | "op_in_by_val" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -2117,6 +2211,126 @@ fn lower_function(
                     values.push(value);
                 }
                 registers.insert(destination, RegisterValue::Concatenation(values));
+            }
+            "op_call_varargs" | "op_tail_call_varargs" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let callee_value =
+                    read_register(function, &registers, signed_operand(instruction, "callee")?)?;
+                let this_value = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "thisValue")?,
+                )?;
+                let argument_list = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "arguments")?,
+                )?;
+                let first = usize::try_from(signed_operand(instruction, "firstVarArg")?)
+                    .map_err(|_| unsupported(function, instruction, descriptor.opcode))?;
+                let arguments = static_argument_values(&state.heap, &argument_list, first)?;
+                let RegisterValue::Function {
+                    call: callee,
+                    environment,
+                    ..
+                } = callee_value.clone()
+                else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let callee_definition = unit.functions.get(callee.index()).ok_or_else(|| {
+                    imported_error(format!("f{} calls missing f{}", function.id.0, callee.0))
+                })?;
+                let body = lower_function(
+                    unit,
+                    callee_definition,
+                    functions,
+                    call_arities,
+                    Some(&arguments),
+                    environment,
+                    Some(this_value),
+                    Some(callee_value),
+                    state,
+                    call_depth + 1,
+                )?;
+                if !body.writes.is_empty() {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                }
+                if let Some(thrown) = body.abrupt {
+                    if let Some(target) =
+                        static_exception_target(function, instruction, &instruction_indices)?
+                    {
+                        pending_exception = Some(thrown);
+                        instruction_index = target;
+                        continue;
+                    }
+                    abrupt = Some(thrown);
+                    break;
+                }
+                let value = body.result.unwrap_or(RegisterValue::Undefined);
+                registers.insert(destination, value.clone());
+                if descriptor.opcode == "op_tail_call_varargs" {
+                    result = Some(value);
+                    break;
+                }
+            }
+            "op_construct_varargs" | "op_super_construct_varargs" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let callee_value =
+                    read_register(function, &registers, signed_operand(instruction, "callee")?)?;
+                let new_target = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "thisValue")?,
+                )?;
+                let argument_list = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "arguments")?,
+                )?;
+                let first = usize::try_from(signed_operand(instruction, "firstVarArg")?)
+                    .map_err(|_| unsupported(function, instruction, descriptor.opcode))?;
+                let arguments = static_argument_values(&state.heap, &argument_list, first)?;
+                let RegisterValue::Function {
+                    construct: Some(callee),
+                    environment,
+                    ..
+                } = callee_value.clone()
+                else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let callee_definition = unit.functions.get(callee.index()).ok_or_else(|| {
+                    imported_error(format!(
+                        "f{} constructs missing f{}",
+                        function.id.0, callee.0
+                    ))
+                })?;
+                let body = lower_function(
+                    unit,
+                    callee_definition,
+                    functions,
+                    call_arities,
+                    Some(&arguments),
+                    environment,
+                    Some(new_target),
+                    Some(callee_value),
+                    state,
+                    call_depth + 1,
+                )?;
+                if !body.writes.is_empty() {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                }
+                if let Some(thrown) = body.abrupt {
+                    if let Some(target) =
+                        static_exception_target(function, instruction, &instruction_indices)?
+                    {
+                        pending_exception = Some(thrown);
+                        instruction_index = target;
+                        continue;
+                    }
+                    abrupt = Some(thrown);
+                    break;
+                }
+                registers.insert(destination, body.result.unwrap_or(RegisterValue::Undefined));
             }
             "op_call" | "op_tail_call" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -2772,6 +2986,44 @@ fn call_register_values(
     (1..count)
         .map(|index| read_register(function, registers, this_register + index as i64))
         .collect()
+}
+
+fn static_argument_values(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    arguments: &RegisterValue,
+    first: usize,
+) -> Result<Vec<RegisterValue>, LlvmError> {
+    let values = match arguments {
+        RegisterValue::Arguments(values) => values.clone(),
+        RegisterValue::Spread(values) => values.clone(),
+        RegisterValue::Array(id) => {
+            let Some(StaticHeapEntry::Array {
+                elements, length, ..
+            }) = heap.get(id)
+            else {
+                return Err(imported_error(
+                    "varargs array references a missing static heap entry",
+                ));
+            };
+            (0..*length)
+                .map(|index| {
+                    elements
+                        .get(&index)
+                        .map(StaticProperty::read)
+                        .unwrap_or(RegisterValue::Undefined)
+                })
+                .collect()
+        }
+        _ => {
+            return Err(imported_error(
+                "varargs source is not a static argument list",
+            ));
+        }
+    };
+    values
+        .get(first..)
+        .map(<[RegisterValue]>::to_vec)
+        .ok_or_else(|| imported_error("varargs first argument exceeds the argument list"))
 }
 
 fn call_this_value(
@@ -3947,6 +4199,29 @@ fn static_set_property(
     }
     static_put_property(heap, base, key, value)?;
     Ok(StaticPropertyAssignment::Stored)
+}
+
+fn static_set_property_with_receiver(
+    heap: &mut BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    receiver: &RegisterValue,
+    key: StaticPropertyKey,
+    value: RegisterValue,
+) -> Result<StaticPropertyAssignment, LlvmError> {
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
+        _ => return Err(imported_error("super property base is not a static object")),
+    };
+    if let Some(property) = static_lookup_property_descriptor(heap, id, &key, 0)?
+        && property.is_accessor
+    {
+        return property
+            .setter
+            .map(StaticPropertyAssignment::CallSetter)
+            .ok_or_else(|| imported_error("static super accessor has no setter"));
+    }
+    static_set_property(heap, receiver, key, value)
 }
 
 fn static_error_name(kind: u32) -> &'static str {
