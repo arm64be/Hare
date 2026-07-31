@@ -1043,5 +1043,39 @@
     ],
     "verified_opcodes": [],
     "source": "const h026AccessorPair = { get value() { return this.stored + 2; }, set value(input) { this.stored = input; } }; h026AccessorPair.value = 40; console.log(h026AccessorPair.value);"
+  },
+  {
+    "id": "object.derived-construction",
+    "family": "object_property",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_new_func_exp",
+      "op_new_object",
+      "op_define_data_property",
+      "op_jstricteq",
+      "op_is_constructor",
+      "op_jtrue",
+      "op_throw_static_error",
+      "op_get_by_id",
+      "op_call_ignore_result",
+      "op_put_by_id",
+      "op_construct",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_call",
+      "op_instanceof",
+      "op_ret",
+      "op_unreachable",
+      "op_create_this",
+      "op_to_this",
+      "op_get_prototype_of",
+      "op_super_construct",
+      "op_is_empty",
+      "op_check_tdz"
+    ],
+    "verified_opcodes": [],
+    "source": "class H026Base { constructor(value) { this.value = value; } getValue() { return this.value; } } class H026Derived extends H026Base { constructor() { super(42); } } const h026Derived = new H026Derived(); console.log(h026Derived.getValue()); console.log(h026Derived instanceof H026Base);"
   }
 ]

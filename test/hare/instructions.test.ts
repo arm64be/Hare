@@ -186,6 +186,8 @@ test.skipIf(!isLinux)(
       42
       42
       42
+      42
+      true
       "
     `);
     expect(referenceExitCode).toBe(0);

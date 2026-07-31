@@ -61,6 +61,7 @@ enum Builtin {
     HasOwnPropertyFunction,
     Object,
     SentinelString,
+    SetPrototypeDirectOrThrow,
 }
 
 fn builtin_is_callable(builtin: Builtin) -> bool {
@@ -70,6 +71,7 @@ fn builtin_is_callable(builtin: Builtin) -> bool {
             | Builtin::CreatePrivateSymbol
             | Builtin::HasOwnPropertyFunction
             | Builtin::Object
+            | Builtin::SetPrototypeDirectOrThrow
     )
 }
 
@@ -174,6 +176,7 @@ enum StaticHeapEntry {
         private_brands: BTreeSet<u32>,
     },
     Function {
+        prototype: Option<RegisterValue>,
         properties: BTreeMap<Box<str>, StaticProperty>,
         property_order: Vec<Box<str>>,
         private_properties: BTreeMap<u32, RegisterValue>,
@@ -1341,6 +1344,7 @@ fn lower_function(
                 state.heap.insert(
                     heap_id,
                     StaticHeapEntry::Function {
+                        prototype: None,
                         properties,
                         property_order,
                         private_properties: BTreeMap::new(),
@@ -1527,10 +1531,7 @@ fn lower_function(
                 let destination = signed_operand(instruction, "dst")?;
                 let value =
                     read_register(function, &registers, signed_operand(instruction, "value")?)?;
-                let prototype = static_prototype_id(&state.heap, &value)?
-                    .map(|id| static_heap_value(&state.heap, id))
-                    .transpose()?
-                    .unwrap_or(RegisterValue::Null);
+                let prototype = static_prototype_value(&state.heap, &value)?;
                 registers.insert(destination, prototype);
             }
             "op_instanceof" => {
@@ -2217,7 +2218,7 @@ fn lower_function(
                     break;
                 }
             }
-            "op_construct" => {
+            "op_construct" | "op_super_construct" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let callee_value =
                     read_register(function, &registers, signed_operand(instruction, "callee")?)?;
@@ -2230,6 +2231,11 @@ fn lower_function(
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 };
                 let arguments = call_register_values(function, instruction, &registers)?;
+                let new_target = if descriptor.opcode == "op_super_construct" {
+                    call_this_value(function, instruction, &registers)?
+                } else {
+                    callee_value.clone()
+                };
                 let callee_definition = unit.functions.get(callee.index()).ok_or_else(|| {
                     imported_error(format!(
                         "f{} constructs missing f{}",
@@ -2243,7 +2249,7 @@ fn lower_function(
                     call_arities,
                     Some(&arguments),
                     environment,
-                    Some(callee_value.clone()),
+                    Some(new_target),
                     Some(callee_value),
                     state,
                     call_depth + 1,
@@ -2277,6 +2283,14 @@ fn lower_function(
                             ));
                         }
                         writes.push(arguments.pop().unwrap_or(RegisterValue::ConsoleNoArgument));
+                    }
+                    RegisterValue::Builtin(Builtin::SetPrototypeDirectOrThrow) => {
+                        let base = call_this_value(function, instruction, &registers)?;
+                        let arguments = call_register_values(function, instruction, &registers)?;
+                        let [prototype] = arguments.as_slice() else {
+                            return Err(unsupported(function, instruction, descriptor.opcode));
+                        };
+                        static_set_prototype(&mut state.heap, &base, prototype)?;
                     }
                     RegisterValue::Function {
                         call: callee,
@@ -2846,6 +2860,9 @@ fn register_constant_value(
         VisitorConstantValue::LinkTimeConstant(name) => match name.as_ref() {
             "Array" => RegisterValue::Builtin(Builtin::Array),
             "createPrivateSymbol" => RegisterValue::Builtin(Builtin::CreatePrivateSymbol),
+            "setPrototypeDirectOrThrow" => {
+                RegisterValue::Builtin(Builtin::SetPrototypeDirectOrThrow)
+            }
             "emptyPropertyNameEnumerator" => {
                 RegisterValue::Builtin(Builtin::EmptyPropertyNameEnumerator)
             }
@@ -2968,7 +2985,8 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
         ),
         "op_is_constructor" => match value {
             RegisterValue::Builtin(builtin) => Some(builtin_is_constructor(*builtin)),
-            RegisterValue::Function { .. } | RegisterValue::ConsoleLog => None,
+            RegisterValue::Function { construct, .. } => Some(construct.is_some()),
+            RegisterValue::ConsoleLog => Some(false),
             _ => Some(false),
         },
         _ => None,
@@ -3409,6 +3427,85 @@ fn static_prototype_id(
         }
         StaticHeapEntry::Function { .. } => Ok(None),
     }
+}
+
+fn static_prototype_value(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    value: &RegisterValue,
+) -> Result<RegisterValue, LlvmError> {
+    match value {
+        RegisterValue::Function { heap_id, .. } => match heap.get(heap_id).ok_or_else(|| {
+            imported_error("prototype lookup references a missing static function")
+        })? {
+            StaticHeapEntry::Function { prototype, .. } => {
+                Ok(prototype.clone().unwrap_or(RegisterValue::Null))
+            }
+            _ => Err(imported_error(
+                "function references a non-function static heap entry",
+            )),
+        },
+        RegisterValue::Object(_) | RegisterValue::Array(_) => static_prototype_id(heap, value)?
+            .map(|id| static_heap_value(heap, id))
+            .transpose()
+            .map(|value| value.unwrap_or(RegisterValue::Null)),
+        _ => Err(imported_error(
+            "prototype lookup base is not a static object",
+        )),
+    }
+}
+
+fn static_set_prototype(
+    heap: &mut BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    prototype: &RegisterValue,
+) -> Result<(), LlvmError> {
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
+        _ => {
+            return Err(imported_error(
+                "prototype mutation base is not a static object",
+            ));
+        }
+    };
+    let entry = heap
+        .get_mut(&id)
+        .ok_or_else(|| imported_error("prototype mutation references a missing static entry"))?;
+    match entry {
+        StaticHeapEntry::Object {
+            prototype: target, ..
+        }
+        | StaticHeapEntry::Array {
+            prototype: target, ..
+        } => {
+            *target = match prototype {
+                RegisterValue::Object(id) | RegisterValue::Array(id) => Some(*id),
+                RegisterValue::Null => None,
+                _ => {
+                    return Err(imported_error(
+                        "object prototype is neither an object nor null",
+                    ));
+                }
+            };
+        }
+        StaticHeapEntry::Function {
+            prototype: target, ..
+        } => {
+            if !matches!(
+                prototype,
+                RegisterValue::Function { .. }
+                    | RegisterValue::Object(_)
+                    | RegisterValue::Array(_)
+                    | RegisterValue::Null
+            ) {
+                return Err(imported_error(
+                    "function prototype is neither an object nor null",
+                ));
+            }
+            *target = (!matches!(prototype, RegisterValue::Null)).then(|| prototype.clone());
+        }
+    }
+    Ok(())
 }
 
 fn static_heap_value(
