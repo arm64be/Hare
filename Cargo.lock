@@ -2760,6 +2760,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hare_memory"
+version = "0.0.0"
+dependencies = [
+ "hare_analysis",
+]
+
+[[package]]
 name = "hare_runtime"
 version = "0.0.0"
 dependencies = [
