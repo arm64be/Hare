@@ -71,6 +71,9 @@ enum RegisterValue {
     ConsoleObject,
     ConsoleLog,
     ConsoleNoArgument,
+    Object(u32),
+    Array(u32),
+    Spread(Vec<Self>),
     Empty,
     Undefined,
     Null,
@@ -80,6 +83,24 @@ enum RegisterValue {
     PositiveInfinity,
     NegativeInfinity,
     Opaque,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum StaticHeapEntry {
+    Object {
+        properties: BTreeMap<Box<str>, RegisterValue>,
+    },
+    Array {
+        elements: BTreeMap<u32, RegisterValue>,
+        properties: BTreeMap<Box<str>, RegisterValue>,
+        length: u32,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum StaticPropertyKey {
+    Index(u32),
+    Name(Box<str>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -177,6 +198,8 @@ fn lower_function(
 
     let mut writes = Vec::new();
     let mut result = None;
+    let mut heap = BTreeMap::new();
+    let mut next_heap_id = 0_u32;
     let instruction_indices = function
         .instructions
         .iter()
@@ -244,6 +267,122 @@ fn lower_function(
                 let value = read_register(function, &registers, source)?;
                 registers.insert(destination, value);
             }
+            "op_new_object" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let id = next_heap_id;
+                next_heap_id = next_heap_id
+                    .checked_add(1)
+                    .ok_or_else(|| imported_error("static heap id overflow"))?;
+                heap.insert(
+                    id,
+                    StaticHeapEntry::Object {
+                        properties: BTreeMap::new(),
+                    },
+                );
+                registers.insert(destination, RegisterValue::Object(id));
+            }
+            "op_new_array" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let first = signed_operand(instruction, "argv")?;
+                let count = usize::try_from(unsigned_operand(instruction, "argc")?)
+                    .map_err(|_| imported_error("array literal length does not fit usize"))?;
+                let mut elements = BTreeMap::new();
+                for index in 0..count {
+                    let register = first
+                        .checked_sub(index as i64)
+                        .ok_or_else(|| imported_error("array register range underflow"))?;
+                    let index = u32::try_from(index)
+                        .map_err(|_| imported_error("array literal length exceeds u32"))?;
+                    elements.insert(index, read_register(function, &registers, register)?);
+                }
+                let length = u32::try_from(count)
+                    .map_err(|_| imported_error("array literal length exceeds u32"))?;
+                let id = next_heap_id;
+                next_heap_id = next_heap_id
+                    .checked_add(1)
+                    .ok_or_else(|| imported_error("static heap id overflow"))?;
+                heap.insert(
+                    id,
+                    StaticHeapEntry::Array {
+                        elements,
+                        properties: BTreeMap::new(),
+                        length,
+                    },
+                );
+                registers.insert(destination, RegisterValue::Array(id));
+            }
+            "op_spread" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let argument = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "argument")?,
+                )?;
+                let RegisterValue::Array(id) = argument else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let Some(StaticHeapEntry::Array {
+                    elements, length, ..
+                }) = heap.get(&id)
+                else {
+                    return Err(imported_error("spread references a missing static array"));
+                };
+                let values = (0..*length)
+                    .map(|index| {
+                        elements
+                            .get(&index)
+                            .cloned()
+                            .unwrap_or(RegisterValue::Undefined)
+                    })
+                    .collect();
+                registers.insert(destination, RegisterValue::Spread(values));
+            }
+            "op_new_array_with_spread" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let first = signed_operand(instruction, "argv")?;
+                let count = usize::try_from(unsigned_operand(instruction, "argc")?)
+                    .map_err(|_| imported_error("spread array length does not fit usize"))?;
+                let _bit_vector = unsigned_operand(instruction, "bitVector")?;
+                let mut values = Vec::new();
+                for index in 0..count {
+                    let register = first
+                        .checked_sub(index as i64)
+                        .ok_or_else(|| imported_error("spread array register range underflow"))?;
+                    match read_register(function, &registers, register)? {
+                        RegisterValue::Spread(spread) => values.extend(spread),
+                        value => values.push(value),
+                    }
+                }
+                let length = u32::try_from(values.len())
+                    .map_err(|_| imported_error("spread array length exceeds u32"))?;
+                let elements = values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, value)| (index as u32, value))
+                    .collect();
+                let id = next_heap_id;
+                next_heap_id = next_heap_id
+                    .checked_add(1)
+                    .ok_or_else(|| imported_error("static heap id overflow"))?;
+                heap.insert(
+                    id,
+                    StaticHeapEntry::Array {
+                        elements,
+                        properties: BTreeMap::new(),
+                        length,
+                    },
+                );
+                registers.insert(destination, RegisterValue::Array(id));
+            }
+            "op_put_by_id" => {
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let value =
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                let property =
+                    identifier_string(function, unsigned_operand(instruction, "property")?)?;
+                static_put_property(&mut heap, &base, StaticPropertyKey::Name(property), value)?;
+            }
             "op_new_func" | "op_new_func_exp" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let index = unsigned_operand(instruction, "functionDecl")?;
@@ -291,9 +430,102 @@ fn lower_function(
                     && identifier_is(function, property, b"log")?
                 {
                     registers.insert(destination, RegisterValue::ConsoleLog);
+                } else if let Some(base) = registers.get(&base) {
+                    let property = identifier_string(function, property)?;
+                    let value =
+                        static_get_property(&heap, base, StaticPropertyKey::Name(property))?;
+                    registers.insert(destination, value);
                 } else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
+            }
+            "op_get_length" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let length = match base {
+                    RegisterValue::Array(id) => match heap.get(&id) {
+                        Some(StaticHeapEntry::Array { length, .. }) => i64::from(*length),
+                        _ => {
+                            return Err(imported_error(
+                                "array references a missing static heap entry",
+                            ));
+                        }
+                    },
+                    RegisterValue::String(value) => i64::try_from(value.encode_utf16().count())
+                        .map_err(|_| imported_error("string length exceeds i64"))?,
+                    _ => return Err(unsupported(function, instruction, descriptor.opcode)),
+                };
+                registers.insert(
+                    destination,
+                    RegisterValue::Scalar(ScalarExpression::Integer(length)),
+                );
+            }
+            "op_get_by_val" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "property")?,
+                )?;
+                let property = static_property_key(&property, functions)?;
+                let value = static_get_property(&heap, &base, property)?;
+                registers.insert(destination, value);
+            }
+            "op_put_by_val" | "op_put_by_val_direct" => {
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "property")?,
+                )?;
+                let property = static_property_key(&property, functions)?;
+                let value =
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                static_put_property(&mut heap, &base, property, value)?;
+            }
+            "op_in_by_id" | "op_in_by_val" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property = if descriptor.opcode == "op_in_by_id" {
+                    StaticPropertyKey::Name(identifier_string(
+                        function,
+                        unsigned_operand(instruction, "property")?,
+                    )?)
+                } else {
+                    let property = read_register(
+                        function,
+                        &registers,
+                        signed_operand(instruction, "property")?,
+                    )?;
+                    static_property_key(&property, functions)?
+                };
+                let present = static_has_property(&heap, &base, property)?;
+                registers.insert(destination, RegisterValue::Boolean(present));
+            }
+            "op_del_by_id" | "op_del_by_val" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property = if descriptor.opcode == "op_del_by_id" {
+                    StaticPropertyKey::Name(identifier_string(
+                        function,
+                        unsigned_operand(instruction, "property")?,
+                    )?)
+                } else {
+                    let property = read_register(
+                        function,
+                        &registers,
+                        signed_operand(instruction, "property")?,
+                    )?;
+                    static_property_key(&property, functions)?
+                };
+                static_delete_property(&mut heap, &base, property)?;
+                registers.insert(destination, RegisterValue::Boolean(true));
             }
             "op_add" | "op_sub" | "op_mul" | "op_div" | "op_mod" | "op_pow" | "op_bitand"
             | "op_bitor" | "op_bitxor" | "op_lshift" | "op_rshift" | "op_urshift" => {
@@ -666,6 +898,8 @@ fn known_truthiness(value: &RegisterValue) -> Option<bool> {
         RegisterValue::PositiveInfinity
         | RegisterValue::NegativeInfinity
         | RegisterValue::Function(_)
+        | RegisterValue::Object(_)
+        | RegisterValue::Array(_)
         | RegisterValue::ConsoleObject
         | RegisterValue::ConsoleLog => Some(true),
         _ => None,
@@ -783,6 +1017,8 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
             | RegisterValue::String(_)
             | RegisterValue::Concatenation(_)
             | RegisterValue::Function(_)
+            | RegisterValue::Object(_)
+            | RegisterValue::Array(_)
             | RegisterValue::ConsoleObject
             | RegisterValue::ConsoleLog
             | RegisterValue::Undefined
@@ -808,7 +1044,10 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
         "op_typeof_is_undefined" => Some(matches!(value, RegisterValue::Undefined)),
         "op_typeof_is_object" => Some(matches!(
             value,
-            RegisterValue::Null | RegisterValue::ConsoleObject
+            RegisterValue::Null
+                | RegisterValue::Object(_)
+                | RegisterValue::Array(_)
+                | RegisterValue::ConsoleObject
         )),
         "op_typeof_is_function" => Some(matches!(
             value,
@@ -833,7 +1072,11 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
         "op_is_big_int" => Some(false),
         "op_is_object" => Some(matches!(
             value,
-            RegisterValue::Function(_) | RegisterValue::ConsoleObject | RegisterValue::ConsoleLog
+            RegisterValue::Function(_)
+                | RegisterValue::Object(_)
+                | RegisterValue::Array(_)
+                | RegisterValue::ConsoleObject
+                | RegisterValue::ConsoleLog
         )),
         "op_is_callable" => Some(matches!(
             value,
@@ -858,7 +1101,10 @@ fn known_typeof(value: &RegisterValue) -> Option<&'static str> {
         | RegisterValue::NegativeInfinity => Some("number"),
         RegisterValue::String(_) | RegisterValue::Concatenation(_) => Some("string"),
         RegisterValue::Function(_) | RegisterValue::ConsoleLog => Some("function"),
-        RegisterValue::Null | RegisterValue::ConsoleObject => Some("object"),
+        RegisterValue::Null
+        | RegisterValue::Object(_)
+        | RegisterValue::Array(_)
+        | RegisterValue::ConsoleObject => Some("object"),
         _ => None,
     }
 }
@@ -1005,6 +1251,251 @@ fn identifier_is(
         ))
     })?;
     Ok(matches!(identifier, SourceText::Latin1(bytes) if bytes.as_ref() == expected))
+}
+
+fn identifier_string(function: &VisitorFunction, index: u64) -> Result<Box<str>, LlvmError> {
+    let index = usize::try_from(index)
+        .map_err(|_| imported_error("identifier index does not fit usize"))?;
+    let identifier = function.identifiers.get(index).ok_or_else(|| {
+        imported_error(format!(
+            "f{} references missing identifier {index}",
+            function.id.0
+        ))
+    })?;
+    Ok(source_text_to_string(identifier)?.into_boxed_str())
+}
+
+fn static_property_key(
+    value: &RegisterValue,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
+) -> Result<StaticPropertyKey, LlvmError> {
+    match value {
+        RegisterValue::Scalar(expression) => {
+            let value = evaluate(expression, functions, &[], 0)?;
+            if let Ok(index) = u32::try_from(value)
+                && index != u32::MAX
+            {
+                Ok(StaticPropertyKey::Index(index))
+            } else {
+                Ok(StaticPropertyKey::Name(value.to_string().into_boxed_str()))
+            }
+        }
+        RegisterValue::String(value) => Ok(value
+            .parse::<u32>()
+            .ok()
+            .filter(|index| *index != u32::MAX && index.to_string().as_str() == value.as_ref())
+            .map_or_else(
+                || StaticPropertyKey::Name(value.clone()),
+                StaticPropertyKey::Index,
+            )),
+        RegisterValue::NegativeZero => Ok(StaticPropertyKey::Index(0)),
+        RegisterValue::Boolean(value) => Ok(StaticPropertyKey::Name(
+            (if *value { "true" } else { "false" }).into(),
+        )),
+        RegisterValue::Null => Ok(StaticPropertyKey::Name("null".into())),
+        RegisterValue::Undefined => Ok(StaticPropertyKey::Name("undefined".into())),
+        _ => Err(imported_error("property key is not statically known")),
+    }
+}
+
+fn static_get_property(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    key: StaticPropertyKey,
+) -> Result<RegisterValue, LlvmError> {
+    let (id, is_array) = match base {
+        RegisterValue::Object(id) => (*id, false),
+        RegisterValue::Array(id) => (*id, true),
+        _ => return Err(imported_error("property read base is not a static object")),
+    };
+    let entry = heap
+        .get(&id)
+        .ok_or_else(|| imported_error("property read references a missing static heap entry"))?;
+    match (entry, key) {
+        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Name(name)) => properties
+            .get(&name)
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| missing_static_property(&name, is_array)),
+        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Index(index)) => {
+            let name = index.to_string();
+            properties
+                .get(name.as_str())
+                .cloned()
+                .map(Ok)
+                .unwrap_or(Ok(RegisterValue::Undefined))
+        }
+        (StaticHeapEntry::Array { elements, .. }, StaticPropertyKey::Index(index)) => Ok(elements
+            .get(&index)
+            .cloned()
+            .unwrap_or(RegisterValue::Undefined)),
+        (
+            StaticHeapEntry::Array {
+                properties, length, ..
+            },
+            StaticPropertyKey::Name(name),
+        ) if name.as_ref() == "length" => Ok(RegisterValue::Scalar(ScalarExpression::Integer(
+            i64::from(*length),
+        ))),
+        (StaticHeapEntry::Array { properties, .. }, StaticPropertyKey::Name(name)) => properties
+            .get(&name)
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| missing_static_property(&name, is_array)),
+    }
+}
+
+fn static_put_property(
+    heap: &mut BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    key: StaticPropertyKey,
+    value: RegisterValue,
+) -> Result<(), LlvmError> {
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        _ => return Err(imported_error("property write base is not a static object")),
+    };
+    let entry = heap
+        .get_mut(&id)
+        .ok_or_else(|| imported_error("property write references a missing static heap entry"))?;
+    match (entry, key) {
+        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Name(name)) => {
+            if name.as_ref() == "__proto__" {
+                return Err(imported_error("static __proto__ mutation is not admitted"));
+            }
+            properties.insert(name, value);
+        }
+        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Index(index)) => {
+            properties.insert(index.to_string().into_boxed_str(), value);
+        }
+        (
+            StaticHeapEntry::Array {
+                elements, length, ..
+            },
+            StaticPropertyKey::Index(index),
+        ) => {
+            elements.insert(index, value);
+            *length = (*length).max(index.saturating_add(1));
+        }
+        (StaticHeapEntry::Array { .. }, StaticPropertyKey::Name(name))
+            if name.as_ref() == "length" =>
+        {
+            return Err(imported_error(
+                "static array length mutation is not admitted",
+            ));
+        }
+        (StaticHeapEntry::Array { properties, .. }, StaticPropertyKey::Name(name)) => {
+            properties.insert(name, value);
+        }
+    }
+    Ok(())
+}
+
+fn static_has_property(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    key: StaticPropertyKey,
+) -> Result<bool, LlvmError> {
+    let (id, is_array) = match base {
+        RegisterValue::Object(id) => (*id, false),
+        RegisterValue::Array(id) => (*id, true),
+        _ => {
+            return Err(imported_error(
+                "property membership base is not a static object",
+            ));
+        }
+    };
+    let entry = heap.get(&id).ok_or_else(|| {
+        imported_error("property membership references a missing static heap entry")
+    })?;
+    match (entry, key) {
+        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Name(name)) => {
+            if properties.contains_key(&name) {
+                Ok(true)
+            } else {
+                missing_static_property(&name, is_array).map(|_| false)
+            }
+        }
+        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Index(index)) => {
+            Ok(properties.contains_key(index.to_string().as_str()))
+        }
+        (StaticHeapEntry::Array { elements, .. }, StaticPropertyKey::Index(index)) => {
+            Ok(elements.contains_key(&index))
+        }
+        (StaticHeapEntry::Array { .. }, StaticPropertyKey::Name(name))
+            if name.as_ref() == "length" =>
+        {
+            Ok(true)
+        }
+        (StaticHeapEntry::Array { properties, .. }, StaticPropertyKey::Name(name)) => {
+            if properties.contains_key(&name) {
+                Ok(true)
+            } else {
+                missing_static_property(&name, is_array).map(|_| false)
+            }
+        }
+    }
+}
+
+fn static_delete_property(
+    heap: &mut BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    key: StaticPropertyKey,
+) -> Result<(), LlvmError> {
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        _ => {
+            return Err(imported_error(
+                "property delete base is not a static object",
+            ));
+        }
+    };
+    let entry = heap
+        .get_mut(&id)
+        .ok_or_else(|| imported_error("property delete references a missing static heap entry"))?;
+    match (entry, key) {
+        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Name(name)) => {
+            properties.remove(&name);
+        }
+        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Index(index)) => {
+            properties.remove(index.to_string().as_str());
+        }
+        (StaticHeapEntry::Array { elements, .. }, StaticPropertyKey::Index(index)) => {
+            elements.remove(&index);
+        }
+        (StaticHeapEntry::Array { .. }, StaticPropertyKey::Name(name))
+            if name.as_ref() == "length" =>
+        {
+            return Err(imported_error("array length is not configurable"));
+        }
+        (StaticHeapEntry::Array { properties, .. }, StaticPropertyKey::Name(name)) => {
+            properties.remove(&name);
+        }
+    }
+    Ok(())
+}
+
+fn missing_static_property(name: &str, is_array: bool) -> Result<RegisterValue, LlvmError> {
+    const OBJECT_PROTOTYPE_PROPERTIES: &[&str] = &[
+        "__defineGetter__",
+        "__defineSetter__",
+        "__lookupGetter__",
+        "__lookupSetter__",
+        "__proto__",
+        "constructor",
+        "hasOwnProperty",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+        "toLocaleString",
+        "toString",
+        "valueOf",
+    ];
+    if is_array || OBJECT_PROTOTYPE_PROPERTIES.contains(&name) {
+        return Err(imported_error(format!(
+            "static property read may observe a prototype member named {name}"
+        )));
+    }
+    Ok(RegisterValue::Undefined)
 }
 
 fn signed_operand(instruction: &VisitorInstruction, name: &str) -> Result<i64, LlvmError> {

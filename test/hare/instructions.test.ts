@@ -120,6 +120,14 @@ test.skipIf(!isLinux)(
       9
       hare-42
       42
+      true
+      true
+      40
+      true
+      true
+      42
+      7
+      42
 
       "
     `);
