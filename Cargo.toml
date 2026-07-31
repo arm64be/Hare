@@ -74,6 +74,7 @@ members = [
   "src/hare_frontend",
   "src/hare_llvm",
   "src/hare_memory",
+  "src/hare_result",
   "src/hare_runtime",
   "src/jsc_macros",
   "src/ptr",
@@ -438,6 +439,7 @@ hare_effect = { path = "src/hare_effect" }
 hare_frontend = { path = "src/hare_frontend" }
 hare_llvm = { path = "src/hare_llvm" }
 hare_memory = { path = "src/hare_memory" }
+hare_result = { path = "src/hare_result" }
 hare_runtime = { path = "src/hare_runtime" }
 bun_jsc_macros = { path = "src/jsc_macros" }
 bun_ptr = { path = "src/ptr" }
