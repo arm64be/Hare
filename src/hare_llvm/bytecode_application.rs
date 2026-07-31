@@ -50,6 +50,12 @@ enum ScalarKind {
     Boolean,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Builtin {
+    Array,
+    Object,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ScalarFunction {
     id: FunctionId,
@@ -71,6 +77,8 @@ enum RegisterValue {
     ConsoleObject,
     ConsoleLog,
     ConsoleNoArgument,
+    BuiltinScope(Builtin),
+    Builtin(Builtin),
     Object(u32),
     Array(u32),
     Spread(Vec<Self>),
@@ -261,6 +269,26 @@ fn lower_function(
                     continue;
                 }
             }
+            "op_jneq_ptr" | "op_jeq_ptr" => {
+                let value =
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                let special_pointer = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "specialPointer")?,
+                )?;
+                let equal = known_pointer_equality(&value, &special_pointer)
+                    .ok_or_else(|| unsupported(function, instruction, descriptor.opcode))?;
+                let should_branch = if descriptor.opcode == "op_jeq_ptr" {
+                    equal
+                } else {
+                    !equal
+                };
+                if should_branch {
+                    instruction_index = branch_target_index(instruction, &instruction_indices)?;
+                    continue;
+                }
+            }
             "op_jeq_null" | "op_jneq_null" | "op_jundefined_or_null" | "op_jnundefined_or_null" => {
                 let value =
                     read_register(function, &registers, signed_operand(instruction, "value")?)?;
@@ -320,6 +348,29 @@ fn lower_function(
                     id,
                     StaticHeapEntry::Array {
                         elements,
+                        properties: BTreeMap::new(),
+                        length,
+                    },
+                );
+                registers.insert(destination, RegisterValue::Array(id));
+            }
+            "op_new_array_with_size" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let length =
+                    scalar_register(function, &registers, signed_operand(instruction, "length")?)?;
+                if !expression_is_closed(&length) {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                }
+                let length = u32::try_from(evaluate(&length, functions, &[], 0)?)
+                    .map_err(|_| unsupported(function, instruction, descriptor.opcode))?;
+                let id = next_heap_id;
+                next_heap_id = next_heap_id
+                    .checked_add(1)
+                    .ok_or_else(|| imported_error("static heap id overflow"))?;
+                heap.insert(
+                    id,
+                    StaticHeapEntry::Array {
+                        elements: BTreeMap::new(),
                         properties: BTreeMap::new(),
                         length,
                     },
@@ -413,6 +464,8 @@ fn lower_function(
                     registers.insert(destination, RegisterValue::NaNScope);
                 } else if identifier_is(function, identifier, b"Infinity")? {
                     registers.insert(destination, RegisterValue::InfinityScope);
+                } else if let Some(builtin) = builtin_identifier(function, identifier)? {
+                    registers.insert(destination, RegisterValue::BuiltinScope(builtin));
                 } else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
@@ -433,6 +486,10 @@ fn lower_function(
                     && identifier_is(function, identifier, b"Infinity")?
                 {
                     registers.insert(destination, RegisterValue::PositiveInfinity);
+                } else if let Some(RegisterValue::BuiltinScope(expected)) = registers.get(&scope)
+                    && builtin_identifier(function, identifier)? == Some(*expected)
+                {
+                    registers.insert(destination, RegisterValue::Builtin(*expected));
                 } else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
@@ -922,7 +979,8 @@ fn known_truthiness(
         | RegisterValue::Object(_)
         | RegisterValue::Array(_)
         | RegisterValue::ConsoleObject
-        | RegisterValue::ConsoleLog => Some(true),
+        | RegisterValue::ConsoleLog
+        | RegisterValue::Builtin(_) => Some(true),
         _ => None,
     };
     Ok(result)
@@ -992,6 +1050,13 @@ fn known_branch_comparison(
         _ => return Ok(None),
     };
     Ok(Some(result))
+}
+
+fn known_pointer_equality(left: &RegisterValue, right: &RegisterValue) -> Option<bool> {
+    match (left, right) {
+        (RegisterValue::Builtin(left), RegisterValue::Builtin(right)) => Some(left == right),
+        _ => None,
+    }
 }
 
 fn call_register_values(
@@ -1071,6 +1136,11 @@ fn read_register(
             VisitorConstantValue::String(value) => {
                 RegisterValue::String(source_text_to_string(value)?.into_boxed_str())
             }
+            VisitorConstantValue::LinkTimeConstant(name) => match name.as_ref() {
+                "Array" => RegisterValue::Builtin(Builtin::Array),
+                "Object" => RegisterValue::Builtin(Builtin::Object),
+                _ => RegisterValue::Opaque,
+            },
             VisitorConstantValue::Empty => RegisterValue::Empty,
             VisitorConstantValue::UnimplementedCell(_) => RegisterValue::Opaque,
         });
@@ -1109,6 +1179,7 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
             | RegisterValue::Array(_)
             | RegisterValue::ConsoleObject
             | RegisterValue::ConsoleLog
+            | RegisterValue::Builtin(_)
             | RegisterValue::Undefined
             | RegisterValue::Null
             | RegisterValue::Boolean(_)
@@ -1139,7 +1210,7 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
         )),
         "op_typeof_is_function" => Some(matches!(
             value,
-            RegisterValue::Function(_) | RegisterValue::ConsoleLog
+            RegisterValue::Function(_) | RegisterValue::ConsoleLog | RegisterValue::Builtin(_)
         )),
         "op_is_undefined_or_null" => Some(matches!(
             value,
@@ -1165,12 +1236,14 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
                 | RegisterValue::Array(_)
                 | RegisterValue::ConsoleObject
                 | RegisterValue::ConsoleLog
+                | RegisterValue::Builtin(_)
         )),
         "op_is_callable" => Some(matches!(
             value,
-            RegisterValue::Function(_) | RegisterValue::ConsoleLog
+            RegisterValue::Function(_) | RegisterValue::ConsoleLog | RegisterValue::Builtin(_)
         )),
         "op_is_constructor" => match value {
+            RegisterValue::Builtin(_) => Some(true),
             RegisterValue::Function(_) | RegisterValue::ConsoleLog => None,
             _ => Some(false),
         },
@@ -1188,7 +1261,9 @@ fn known_typeof(value: &RegisterValue) -> Option<&'static str> {
         | RegisterValue::PositiveInfinity
         | RegisterValue::NegativeInfinity => Some("number"),
         RegisterValue::String(_) | RegisterValue::Concatenation(_) => Some("string"),
-        RegisterValue::Function(_) | RegisterValue::ConsoleLog => Some("function"),
+        RegisterValue::Function(_) | RegisterValue::ConsoleLog | RegisterValue::Builtin(_) => {
+            Some("function")
+        }
         RegisterValue::Null
         | RegisterValue::Object(_)
         | RegisterValue::Array(_)
@@ -1339,6 +1414,19 @@ fn identifier_is(
         ))
     })?;
     Ok(matches!(identifier, SourceText::Latin1(bytes) if bytes.as_ref() == expected))
+}
+
+fn builtin_identifier(
+    function: &VisitorFunction,
+    index: u64,
+) -> Result<Option<Builtin>, LlvmError> {
+    if identifier_is(function, index, b"Array")? {
+        Ok(Some(Builtin::Array))
+    } else if identifier_is(function, index, b"Object")? {
+        Ok(Some(Builtin::Object))
+    } else {
+        Ok(None)
+    }
 }
 
 fn identifier_string(function: &VisitorFunction, index: u64) -> Result<Box<str>, LlvmError> {

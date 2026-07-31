@@ -10,6 +10,7 @@
 #include <limits>
 #include <memory>
 #include <JavaScriptCore/Instruction.h>
+#include <JavaScriptCore/LinkTimeConstant.h>
 
 namespace JSC {
 struct OpNop;
@@ -205,6 +206,28 @@ static bool emitCopiedText(
         static_cast<uint32_t>(sourceRepresentation), span.data(), span.size(), 0);
 }
 
+static bool emitLinkTimeConstant(
+    void* visitorContext, uint32_t index,
+    JSC::SourceCodeRepresentation sourceRepresentation, int32_t rawValue)
+{
+    if (rawValue < 0
+        || static_cast<uint32_t>(rawValue) >= JSC::numberOfLinkTimeConstants)
+        return false;
+
+    switch (static_cast<JSC::LinkTimeConstant>(rawValue)) {
+#define EMIT_LINK_TIME_CONSTANT(name, code)                                    \
+    case JSC::LinkTimeConstant::name: {                                        \
+        static constexpr char constantName[] = #name;                          \
+        return Bun__Hare__visitorConstantText(                                 \
+            visitorContext, index, 8, static_cast<uint32_t>(sourceRepresentation), \
+            constantName, sizeof(constantName) - 1, 1);                        \
+    }
+        JSC_FOREACH_LINK_TIME_CONSTANTS(EMIT_LINK_TIME_CONSTANT)
+#undef EMIT_LINK_TIME_CONSTANT
+    }
+    return false;
+}
+
 static bool visitConstantsAndIdentifiers(
     JSC::UnlinkedCodeBlock& block, void* visitorContext)
 {
@@ -213,6 +236,14 @@ static bool visitConstantsAndIdentifiers(
         JSC::JSValue value = barrier.get();
         auto sourceRepresentation = block.constantSourceCodeRepresentation(index);
         uint32_t sourceRepresentationRaw = static_cast<uint32_t>(sourceRepresentation);
+        if (sourceRepresentation == JSC::SourceCodeRepresentation::LinkTimeConstant) {
+            if (!value.isInt32()
+                || !emitLinkTimeConstant(
+                    visitorContext, index, sourceRepresentation, value.asInt32()))
+                return false;
+            ++index;
+            continue;
+        }
         uint32_t kind;
         uint64_t payload = 0;
         if (value.isEmpty())

@@ -296,6 +296,22 @@ extern "C" fn Bun__Hare__visitorConstantText(
                         .into(),
                 )
             }
+            8 => {
+                let SourceText::Latin1(bytes) = text else {
+                    return Err(ImportError::VisitorRejected(
+                        "link-time constant name must be Latin-1".into(),
+                    ));
+                };
+                VisitorConstantValue::LinkTimeConstant(
+                    core::str::from_utf8(&bytes)
+                        .map_err(|_| {
+                            ImportError::VisitorRejected(
+                                "link-time constant name is not ASCII".into(),
+                            )
+                        })?
+                        .into(),
+                )
+            }
             _ => {
                 return Err(ImportError::VisitorRejected(
                     "invalid text constant kind".into(),

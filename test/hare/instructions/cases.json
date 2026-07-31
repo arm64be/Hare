@@ -413,6 +413,29 @@
     "source": "const h026SpreadHead = (function (value) { return value; })(1); const h026SpreadSource = [h026SpreadHead, 2]; const h026SpreadArray = [0, ...h026SpreadSource, 3]; console.log(h026SpreadArray.length + h026SpreadArray[1] + h026SpreadArray[2]);"
   },
   {
+    "id": "object.expected-constructors",
+    "family": "object_property",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call",
+      "op_call_ignore_result",
+      "op_jneq_ptr",
+      "op_jmp",
+      "op_new_object",
+      "op_new_array_with_size",
+      "op_get_length",
+      "op_put_by_id",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "const h026SizedArray = Array(3); console.log(h026SizedArray.length); const h026ExpectedObject = Object(); h026ExpectedObject.x = 7; console.log(h026ExpectedObject.x);"
+  },
+  {
     "id": "locals.scalar-binding",
     "family": "locals",
     "lowering": "imported",

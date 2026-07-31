@@ -171,6 +171,8 @@ pub enum VisitorConstantValue {
     Int32(i32),
     Float64Bits(u64),
     String(SourceText),
+    /// Stable symbolic identity for a pinned JSC `LinkTimeConstant`.
+    LinkTimeConstant(Box<str>),
     /// Address-free marker for a declarative cell whose fields have not yet
     /// crossed the visitor boundary. Any semantic use remains a compile error.
     UnimplementedCell(Box<str>),
@@ -284,6 +286,19 @@ impl OwnedVisitorUnit {
                     return Err(ValidationError::InvalidFunctionParent {
                         function: function.id,
                         parent,
+                    });
+                }
+            }
+
+            for constant in &function.constants {
+                let symbolic_link_time_constant =
+                    matches!(&constant.value, VisitorConstantValue::LinkTimeConstant(_));
+                if symbolic_link_time_constant
+                    != (constant.source_representation
+                        == ConstantSourceRepresentation::LinkTimeConstant)
+                {
+                    return Err(ValidationError::InvalidLinkTimeConstant {
+                        function: function.id,
                     });
                 }
             }
@@ -873,6 +888,9 @@ pub enum ValidationError {
     InvalidFunctionParent {
         function: FunctionId,
         parent: FunctionId,
+    },
+    InvalidLinkTimeConstant {
+        function: FunctionId,
     },
     MalformedInstructionStream {
         function: FunctionId,
