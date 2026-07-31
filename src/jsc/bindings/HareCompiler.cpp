@@ -34,6 +34,7 @@ struct JSGeneratorTraits {
 #include <JavaScriptCore/InstructionStream.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSCellButterfly.h>
+#include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ParserError.h>
 #include <JavaScriptCore/RegExp.h>
@@ -61,12 +62,16 @@ extern "C" uint32_t Bun__Hare__visitorConstantScalar(
     void*, uint32_t, uint32_t, uint32_t, uint64_t);
 extern "C" uint32_t Bun__Hare__visitorConstantText(
     void*, uint32_t, uint32_t, uint32_t, const void*, size_t, uint32_t);
+extern "C" uint32_t Bun__Hare__visitorConstantBigInt(
+    void*, uint32_t, uint32_t, uint32_t, const uint64_t*, size_t);
 extern "C" uint32_t Bun__Hare__visitorBeginArrayConstant(
     void*, uint32_t, uint32_t, uint32_t, uint32_t);
 extern "C" uint32_t Bun__Hare__visitorArrayConstantScalar(
     void*, uint32_t, uint32_t, uint64_t);
 extern "C" uint32_t Bun__Hare__visitorArrayConstantText(
     void*, uint32_t, const void*, size_t, uint32_t);
+extern "C" uint32_t Bun__Hare__visitorArrayConstantBigInt(
+    void*, uint32_t, uint32_t, const uint64_t*, size_t);
 extern "C" uint32_t Bun__Hare__visitorEndArrayConstant(void*);
 extern "C" uint32_t Bun__Hare__visitorRegExpConstant(
     void*, uint32_t, uint32_t, const void*, size_t, uint32_t, uint32_t);
@@ -228,6 +233,28 @@ static bool emitCopiedText(
         static_cast<uint32_t>(sourceRepresentation), span.data(), span.size(), 0);
 }
 
+static void copyBigIntWords(
+    JSC::JSValue value, bool& negative, Vector<uint64_t, 1>& words)
+{
+    ASSERT(value.isBigInt());
+#if USE(BIGINT32)
+    if (value.isBigInt32()) {
+        int64_t signedValue = value.bigInt32AsInt32();
+        negative = signedValue < 0;
+        uint64_t magnitude = negative
+            ? static_cast<uint64_t>(-signedValue)
+            : static_cast<uint64_t>(signedValue);
+        if (magnitude)
+            words.append(magnitude);
+        return;
+    }
+#endif
+    JSC::JSBigInt* bigInt = value.asHeapBigInt();
+    negative = bigInt->sign();
+    words.grow(bigInt->length());
+    words.shrink(bigInt->toWordsArray(words.mutableSpan()));
+}
+
 static bool emitArrayConstantElement(
     void* visitorContext, uint32_t index, JSC::JSValue value)
 {
@@ -261,6 +288,12 @@ static bool emitArrayConstantElement(
         auto span = string.span16();
         return Bun__Hare__visitorArrayConstantText(
             visitorContext, index, span.data(), span.size(), 0);
+    } else if (value.isBigInt()) {
+        bool negative;
+        Vector<uint64_t, 1> words;
+        copyBigIntWords(value, negative, words);
+        return Bun__Hare__visitorArrayConstantBigInt(
+            visitorContext, index, negative, words.span().data(), words.size());
     } else
         return false;
     return Bun__Hare__visitorArrayConstantScalar(
@@ -364,6 +397,16 @@ static bool visitConstantsAndIdentifiers(
             if (string.isNull()
                 || !emitCopiedText(
                     visitorContext, index, 6, sourceRepresentation, string))
+                return false;
+            ++index;
+            continue;
+        } else if (value.isBigInt()) {
+            bool negative;
+            Vector<uint64_t, 1> words;
+            copyBigIntWords(value, negative, words);
+            if (!Bun__Hare__visitorConstantBigInt(
+                    visitorContext, index, sourceRepresentationRaw, negative,
+                    words.span().data(), words.size()))
                 return false;
             ++index;
             continue;

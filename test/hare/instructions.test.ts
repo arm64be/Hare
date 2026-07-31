@@ -4,6 +4,8 @@ import { closeSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 import cases from "./instructions/cases.json";
 
+const differentialCases = cases.filter(testCase => testCase.lowering !== "rust-unit");
+
 function readAt(fd: number, offset: number, length: number): Buffer {
   const bytes = Buffer.alloc(length);
   expect(readSync(fd, bytes, 0, length, offset)).toBe(length);
@@ -57,7 +59,7 @@ test.skipIf(!isLinux)(
         .filter(columns => columns[classificationIndex] === "semantic")
         .map(columns => [Number(columns[opcodeIdIndex]), columns[opcodeNameIndex]]),
     );
-    const source = cases.map(testCase => `// ${testCase.id}\n${testCase.source}`).join("\n");
+    const source = differentialCases.map(testCase => `// ${testCase.id}\n${testCase.source}`).join("\n");
     using dir = tempDir("hare-instruction-differential", { "reference.js": source });
 
     await using reference = Bun.spawn({
@@ -203,14 +205,19 @@ test.skipIf(!isLinux)(
       42
       42
       SyntaxError
+      42n
+      -4722366482869645213697n
+      bigint
+      true
+      false
       "
     `);
     expect(referenceExitCode).toBe(0);
 
     let nativeStdout = "";
-    const lowerings = [...new Set(cases.map(testCase => testCase.lowering))];
+    const lowerings = [...new Set(differentialCases.map(testCase => testCase.lowering))];
     for (const lowering of lowerings) {
-      const groupSource = cases
+      const groupSource = differentialCases
         .filter(testCase => testCase.lowering === lowering)
         .map(testCase => `// ${testCase.id}\n${testCase.source}`)
         .join("\n");
@@ -256,7 +263,7 @@ test.skipIf(!isLinux)(
       expect(compileStderr).toContain("structurally_complete=true");
       expect(compileStderr).toMatch(/simple-switch t\d+ minimum=2147483647 default=-?\d+ list=true offsets=/);
       const claimedOpcodes = new Set(
-        cases.filter(testCase => testCase.lowering === lowering).flatMap(testCase => testCase.opcodes),
+        differentialCases.filter(testCase => testCase.lowering === lowering).flatMap(testCase => testCase.opcodes),
       );
       const dumpedOpcodes = new Set(
         [...compileStderr.matchAll(/^  instruction offset=\d+ opcode=(\d+) /gm)]
@@ -283,3 +290,16 @@ test.skipIf(!isLinux)(
   },
   180_000,
 );
+
+test.skipIf(!isLinux)("Hare internal instruction witnesses pass", async () => {
+  await using cargo = Bun.spawn({
+    cmd: ["cargo", "test", "-p", "hare_llvm", "--lib", "--quiet"],
+    cwd: join(import.meta.dir, "../.."),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([cargo.stdout.text(), cargo.stderr.text(), cargo.exited]);
+  expect(`${stdout}\n${stderr}`).toContain("test result: ok.");
+  expect(exitCode).toBe(0);
+});

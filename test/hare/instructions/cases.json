@@ -15,7 +15,7 @@
       "op_add",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log((function (value) { return value + 1; })(41));"
   },
   {
@@ -23,7 +23,7 @@
     "family": "numeric_coercion",
     "lowering": "imported",
     "opcodes": ["op_enter", "op_mov", "op_resolve_scope", "op_get_from_scope", "op_get_by_id", "op_call_ignore_result"],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log((9 * 10 - 6) / 2); console.log(17 % 5);"
   },
   {
@@ -31,7 +31,7 @@
     "family": "numeric_coercion",
     "lowering": "imported",
     "opcodes": ["op_mov", "op_resolve_scope", "op_get_from_scope", "op_get_by_id", "op_call_ignore_result"],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log(+true + +null); console.log(+undefined); console.log(-0);"
   },
   {
@@ -54,7 +54,7 @@
       "op_negate",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log((function (value) { return (value * 10 - 6) / 2; })(9)); console.log((function (value) { return value % 5; })(17)); console.log((function (value) { return -value; })(3));"
   },
   {
@@ -82,7 +82,7 @@
       "op_dec",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log((function (value) { return value & 15; })(29)); console.log((function (value) { return value | 16; })(3)); console.log((function (value) { return value ^ 7; })(10)); console.log((function (value) { return value << 2; })(3)); console.log((function (value) { return value >> 2; })(-16)); console.log((function (value) { return value >>> 1; })(-2)); console.log((function (value) { return ~value; })(0)); console.log((function (value) { value++; value--; return value; })(41));"
   },
   {
@@ -102,7 +102,7 @@
       "op_to_number",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log((function (value) { return value ** 3; })(4)); console.log((function (value) { return +value; })(7));"
   },
   {
@@ -129,7 +129,7 @@
       "op_not",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log((function (left, right) { return left == right; })(4, 4)); console.log((function (left, right) { return left != right; })(4, 5)); console.log((function (left, right) { return left === right; })(4, 4)); console.log((function (left, right) { return left !== right; })(4, 5)); console.log((function (left, right) { return left < right; })(3, 4)); console.log((function (left, right) { return left <= right; })(4, 4)); console.log((function (left, right) { return left > right; })(5, 4)); console.log((function (left, right) { return left >= right; })(5, 5)); console.log((function (value) { return !value; })(0));"
   },
   {
@@ -155,7 +155,7 @@
       "op_is_cell_with_type",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log((function (value) { return typeof value === \"undefined\"; })(1)); console.log((function (value) { return typeof value === \"object\"; })(1)); console.log((function (value) { return typeof value === \"function\"; })(1)); console.log((function (value) { return typeof value === \"boolean\"; })(1)); console.log((function (value) { return typeof value === \"number\"; })(1)); console.log((function (value) { return typeof value === \"bigint\"; })(1)); console.log((function (value) { return value == null; })(1)); console.log((function (value) { return value != null; })(1));"
   },
   {
@@ -175,7 +175,7 @@
       "op_beloweq",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log((function (left, right) { return (left >>> 0) < (right >>> 0); })(-1, 0)); console.log((function (left, right) { return (left >>> 0) <= (right >>> 0); })(-1, -1));"
   },
   {
@@ -196,7 +196,7 @@
       "op_add",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log((function (value) { const old = value++; return old + value; })(7));"
   },
   {
@@ -216,7 +216,7 @@
       "op_to_string",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log(typeof (function (value) { return value; })(3)); console.log(`${(function (value) { return value; })(12)}`);"
   },
   {
@@ -238,7 +238,7 @@
       "op_jmp",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log((function (value) { return value ?? 99; })(5)); console.log((function (value) { return typeof value === \"number\" ? 6 : 7; })(1)); console.log((function (value) { return typeof value === \"string\" ? 8 : 9; })(1));"
   },
   {
@@ -271,7 +271,7 @@
       "op_jbeloweq",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "const h026BranchLeft = (function (value) { return value; })(3); const h026BranchRight = (function (value) { return value; })(4); console.log(h026BranchLeft == h026BranchRight ? 1 : 0); console.log(h026BranchLeft != h026BranchRight ? 1 : 0); console.log(h026BranchLeft === h026BranchRight ? 1 : 0); console.log(h026BranchLeft !== h026BranchRight ? 1 : 0); console.log(h026BranchLeft < h026BranchRight ? 1 : 0); console.log(h026BranchLeft <= h026BranchRight ? 1 : 0); console.log(h026BranchLeft > h026BranchRight ? 1 : 0); console.log(h026BranchLeft >= h026BranchRight ? 1 : 0); console.log(!(h026BranchLeft < h026BranchRight) ? 1 : 0); console.log(!(h026BranchLeft <= h026BranchRight) ? 1 : 0); console.log(!(h026BranchLeft > h026BranchRight) ? 1 : 0); console.log(!(h026BranchLeft >= h026BranchRight) ? 1 : 0); console.log((h026BranchLeft >>> 0) < (0 >>> 0) ? 1 : 0); console.log((h026BranchLeft >>> 0) <= (0 >>> 0) ? 1 : 0);"
   },
   {
@@ -299,7 +299,7 @@
       "op_jmp",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "const h026KnownBranchValue = (function (value) { return value; })(5); console.log((typeof h026KnownBranchValue === \"number\" || typeof h026KnownBranchValue === \"string\") ? 1 : 0); console.log(h026KnownBranchValue == null ? 1 : 2); console.log(h026KnownBranchValue != null ? 3 : 4); const h026OptionalObject = { x: h026KnownBranchValue }; console.log(h026OptionalObject?.x);"
   },
   {
@@ -317,7 +317,7 @@
       "op_switch_imm",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "switch (2) { case 1: console.log(10); break; case 2: console.log(20); break; case 3: console.log(30); break; default: console.log(40); }"
   },
   {
@@ -333,7 +333,7 @@
       "op_jmp",
       "op_switch_char"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "switch (\"b\") { case \"a\": console.log(1); break; case \"b\": console.log(2); break; case \"c\": console.log(3); break; default: console.log(4); }"
   },
   {
@@ -349,7 +349,7 @@
       "op_jmp",
       "op_switch_string"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "switch (\"hare\") { case \"ant\": console.log(7); break; case \"hare\": console.log(8); break; case \"zebra\": console.log(9); break; default: console.log(10); }"
   },
   {
@@ -365,7 +365,7 @@
       "op_jmp",
       "op_switch_imm"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "switch (1000000) { case -1000000: console.log(9); break; case 7: console.log(10); break; case 1000000: console.log(11); break; default: console.log(12); }"
   },
   {
@@ -381,7 +381,7 @@
       "op_jmp",
       "op_switch_char"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "switch (\"Ω\") { case \"a\": console.log(11); break; case \"Ω\": console.log(12); break; case \"￿\": console.log(13); break; default: console.log(14); }"
   },
   {
@@ -397,7 +397,7 @@
       "op_strcat",
       "op_call_ignore_result"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log(\"hare\" + \"-\" + 42);"
   },
   {
@@ -420,7 +420,7 @@
       "op_add",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log((function (value) { const object = { first: value }; object.second = 2; return object.first + object.second; })(40)); console.log((function (value) { const object = { x: value }; return \"x\" in object; })(1)); console.log((function (value) { const object = { x: value }; return delete object.x; })(1));"
   },
   {
@@ -441,7 +441,7 @@
       "op_call_ignore_result",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "function h026MutateObject(object) { object.value = 42; return object; } const h026SharedObject = { value: 0 }; console.log(h026MutateObject(h026SharedObject) === h026SharedObject); console.log(h026SharedObject.value);"
   },
   {
@@ -466,7 +466,7 @@
       "op_call_ignore_result",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "function H026Constructor(value) { this.value = value; return 7; } const h026Constructed = new H026Constructor(42); const h026Receiver = { build: H026Constructor }; console.log(h026Constructed.value); console.log(h026Receiver.build(9)); console.log(h026Receiver.value);"
   },
   {
@@ -493,7 +493,7 @@
       "op_get_by_id",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "class H026Class { constructor(value) { this.value = value; } } let h026ClassCallError = \"\"; try { H026Class(1); } catch (error) { h026ClassCallError = error.name; } const h026ClassInstance = new H026Class(42); console.log(h026ClassCallError); console.log(h026ClassInstance instanceof H026Class); console.log(h026ClassInstance.value);"
   },
   {
@@ -518,7 +518,7 @@
       "op_add",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log((function (value) { const array = [value, 2]; array[1] = 3; return array[0] + array[1] + array.length; })(35)); console.log((function (value) { const array = [value]; return 0 in array; })(1)); console.log((function (value) { const array = [value]; return delete array[0]; })(1));"
   },
   {
@@ -537,7 +537,7 @@
       "op_call_ignore_result",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "const h026ImmutableArray = [40, 2, \"hare\"]; console.log(h026ImmutableArray[0] + h026ImmutableArray[1]); console.log(h026ImmutableArray[2]);"
   },
   {
@@ -559,7 +559,7 @@
       "op_put_by_val_direct",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "const h026ComputedKey = (function (value) { return value; })(1); const h026ComputedObject = { [h026ComputedKey]: 41 }; h026ComputedObject[h026ComputedKey] = 42; console.log(h026ComputedObject[h026ComputedKey]);"
   },
   {
@@ -583,7 +583,7 @@
       "op_add",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "const h026SpreadHead = (function (value) { return value; })(1); const h026SpreadSource = [h026SpreadHead, 2]; const h026SpreadArray = [0, ...h026SpreadSource, 3]; console.log(h026SpreadArray.length + h026SpreadArray[1] + h026SpreadArray[2]);"
   },
   {
@@ -606,7 +606,7 @@
       "op_put_by_id",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "const h026SizedArray = Array(3); console.log(h026SizedArray.length); const h026ExpectedObject = Object(); h026ExpectedObject.x = 7; console.log(h026ExpectedObject.x);"
   },
   {
@@ -633,7 +633,7 @@
       "op_mul",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "const h026EnumeratedObject = { z: 1, a: 2 }; let h026EnumeratedTotal = 0; for (const h026EnumeratedKey in h026EnumeratedObject) h026EnumeratedTotal = h026EnumeratedTotal * 10 + h026EnumeratedObject[h026EnumeratedKey]; console.log(h026EnumeratedTotal);"
   },
   {
@@ -663,7 +663,7 @@
       "op_call_ignore_result",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "const h026EnumeratedMutation = { a: 1, b: 2 }; let h026EnumeratedMutationTotal = 0; for (const key in h026EnumeratedMutation) { if (key in h026EnumeratedMutation) { h026EnumeratedMutation[key] = h026EnumeratedMutation[key] + 1; h026EnumeratedMutationTotal = h026EnumeratedMutationTotal * 10 + h026EnumeratedMutation[key]; } } console.log(h026EnumeratedMutationTotal);"
   },
   {
@@ -691,7 +691,7 @@
       "op_call_ignore_result",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "const h026EnumeratedOwn = { a: 1, b: 2 }; let h026EnumeratedOwnCount = 0; for (const key in h026EnumeratedOwn) { if (h026EnumeratedOwn.hasOwnProperty(key)) h026EnumeratedOwnCount++; } console.log(h026EnumeratedOwnCount);"
   },
   {
@@ -712,7 +712,7 @@
       "op_check_traps",
       "op_inc"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "let h026EmptyEnumeratedCount = 0; for (const h026EmptyEnumeratedKey in {}) h026EmptyEnumeratedCount++; console.log(h026EmptyEnumeratedCount);"
   },
   {
@@ -732,7 +732,7 @@
       "op_call_ignore_result",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "let h026Caught = 0; try { throw 41; } catch (error) { h026Caught = error + 1; } console.log(h026Caught);"
   },
   {
@@ -751,7 +751,7 @@
       "op_add",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "function h026Declared(left, right) { return left + right; } console.log(h026Declared(20, 22));"
   },
   {
@@ -773,7 +773,7 @@
       "op_call_ignore_result",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "function h026Arguments(value) { return arguments.length + arguments[0]; } console.log(h026Arguments(41));"
   },
   {
@@ -794,7 +794,7 @@
       "op_call_ignore_result",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "function h026Rest(first, ...rest) { return first + rest.length; } console.log(h026Rest(40, 1, 1));"
   },
   {
@@ -816,7 +816,7 @@
       "op_call_ignore_result",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "function h026ArgumentCount() { return arguments.length; } function h026FirstArgument() { return arguments[0]; } console.log(h026ArgumentCount(1, 2) + h026FirstArgument(40));"
   },
   {
@@ -837,7 +837,7 @@
       "op_call_ignore_result",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "function h026Defaults(first = 40, second = 2) { return first + second; } console.log(h026Defaults(undefined, 2));"
   },
   {
@@ -860,7 +860,7 @@
       "op_add",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "function h026Closure(value) { return function () { return value + 1; }(); } console.log(h026Closure(41));"
   },
   {
@@ -883,7 +883,7 @@
       "op_inc",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "function h026MutableClosure(value) { return function () { value++; return value; }(); } console.log(h026MutableClosure(41));"
   },
   {
@@ -903,7 +903,7 @@
       "op_call_ignore_result",
       "op_ret"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "function h026RegExp() { return /hare/i; } console.log(typeof h026RegExp());"
   },
   {
@@ -919,7 +919,7 @@
       "op_add",
       "op_call_ignore_result"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "const h026Base = 20; let h026Offset = 2; console.log(h026Base * 2 + h026Offset);"
   },
   {
@@ -927,7 +927,7 @@
     "family": "function_async_scope",
     "lowering": "imported",
     "opcodes": ["op_resolve_scope", "op_get_from_scope", "op_get_by_id", "op_call_ignore_result", "op_ret"],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log();"
   },
   {
@@ -960,7 +960,7 @@
       "op_get_private_name",
       "op_has_private_name"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "class H026Private { #value; constructor(value) { this.#value = value; } getValue() { return this.#value; } hasValue(object) { return #value in object; } } const h026Private = new H026Private(42); console.log(h026Private.getValue()); console.log(h026Private.hasValue(h026Private)); console.log(h026Private.hasValue({}));"
   },
   {
@@ -992,7 +992,7 @@
       "op_tail_call",
       "op_has_private_brand"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "class H026PrivateMethod { #value() { return 42; } getValue() { return this.#value(); } hasValue(object) { return #value in object; } } const h026PrivateMethod = new H026PrivateMethod(); console.log(h026PrivateMethod.getValue()); console.log(h026PrivateMethod.hasValue(h026PrivateMethod)); console.log(h026PrivateMethod.hasValue({}));"
   },
   {
@@ -1019,7 +1019,7 @@
       "op_to_this",
       "op_add"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "const h026Accessors = { get value() { return this.stored + 2; }, set value(input) { this.stored = input; }, get [\"other\"]() { return this.stored + 3; }, set [\"other\"](input) { this.stored = input + 1; } }; h026Accessors.value = 40; console.log(h026Accessors.value); h026Accessors[\"other\"] = 38; console.log(h026Accessors[\"other\"]);"
   },
   {
@@ -1041,7 +1041,7 @@
       "op_to_this",
       "op_add"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "const h026AccessorPair = { get value() { return this.stored + 2; }, set value(input) { this.stored = input; } }; h026AccessorPair.value = 40; console.log(h026AccessorPair.value);"
   },
   {
@@ -1075,7 +1075,7 @@
       "op_is_empty",
       "op_check_tdz"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "class H026Base { constructor(value) { this.value = value; } getValue() { return this.value; } } class H026Derived extends H026Base { constructor() { super(42); } } const h026Derived = new H026Derived(); console.log(h026Derived.getValue()); console.log(h026Derived instanceof H026Base);"
   },
   {
@@ -1115,7 +1115,7 @@
       "op_get_by_val_with_this",
       "op_put_by_val_with_this"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "class H026SuperBase { get answer() { return this.value + 2; } set answer(value) { this.value = value; } } class H026SuperDerived extends H026SuperBase { read() { return super.answer; } write(value) { super.answer = value; } readComputed(key) { return super[key]; } writeComputed(key, value) { super[key] = value; } } const h026Super = new H026SuperDerived(); h026Super.write(40); console.log(h026Super.read()); h026Super.writeComputed(\"answer\", 39); console.log(h026Super.readComputed(\"answer\"));"
   },
   {
@@ -1148,7 +1148,7 @@
       "op_unreachable",
       "op_put_by_id"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "function h026Sum(a, b) { return a + b; } function h026Apply(fn, values) { return fn(...values); } console.log(h026Apply(h026Sum, [40, 2])); class H026VarargsConstructor { constructor(value) { this.value = value; } } const h026VarargsConstructed = new H026VarargsConstructor(...[42]); console.log(h026VarargsConstructed.value);"
   },
   {
@@ -1183,7 +1183,7 @@
       "op_catch",
       "op_create_async_generator"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "function* h026GeneratorDeclaration() { yield 42; } async function h026AsyncDeclaration() { return 42; } async function* h026AsyncGeneratorDeclaration() { yield 42; } const h026GeneratorExpression = function* () { yield 42; }; const h026AsyncExpression = async function () { return 42; }; const h026AsyncGeneratorExpression = async function* () { yield 42; }; console.log(typeof h026GeneratorDeclaration); console.log(typeof h026AsyncDeclaration); console.log(typeof h026AsyncGeneratorDeclaration); console.log(typeof h026GeneratorExpression); console.log(typeof h026AsyncExpression); console.log(typeof h026AsyncGeneratorExpression);"
   },
   {
@@ -1227,7 +1227,7 @@
       "op_async_iterator_open",
       "op_async_iterator_next"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "let h026IteratorTotal = 0; for (const value of [40, 2]) { h026IteratorTotal += value; } console.log(h026IteratorTotal); async function h026AsyncIteration(values) { let total = 0; for await (const value of values) { total += value; } return total; } console.log(typeof h026AsyncIteration);"
   },
   {
@@ -1254,7 +1254,111 @@
       "op_call_direct_eval",
       "op_create_this"
     ],
-    "verified_opcodes": [],
+    "verification": "native-differential",
     "source": "console.log(eval(\"40 + 2\")); console.log(eval(42)); try { eval(\"40 +\"); } catch (error) { console.log(error.name); }"
+  },
+  {
+    "id": "numeric.bigint-constants",
+    "family": "numeric_coercion",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_new_func",
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call",
+      "op_call_ignore_result",
+      "op_is_cell_with_type",
+      "op_ret"
+    ],
+    "verification": "native-differential",
+    "source": "function h026IsBigInt(value) { return typeof value === 'bigint'; } console.log(42n); console.log(-4722366482869645213697n); console.log(typeof 42n); console.log(h026IsBigInt(42n)); console.log(h026IsBigInt(42));"
+  },
+  {
+    "id": "internal.async-from-sync-array",
+    "family": "function_async_scope",
+    "lowering": "rust-unit",
+    "opcodes": ["op_async_iterator_open", "op_async_iterator_next"],
+    "verification": "rust-unit",
+    "rust_test": "async_from_sync_array_iterator_preserves_value_and_done_order"
+  },
+  {
+    "id": "internal.direct-arguments",
+    "family": "function_async_scope",
+    "lowering": "rust-unit",
+    "opcodes": ["op_create_direct_arguments", "op_put_to_arguments", "op_get_from_arguments"],
+    "verification": "rust-unit",
+    "rust_test": "direct_arguments_reads_observe_indexed_writes"
+  },
+  {
+    "id": "internal.scoped-arguments",
+    "family": "function_async_scope",
+    "lowering": "rust-unit",
+    "opcodes": ["op_create_scoped_arguments"],
+    "verification": "rust-unit",
+    "rust_test": "scoped_arguments_and_named_parameter_share_storage"
+  },
+  {
+    "id": "internal.bigint-brand",
+    "family": "numeric_coercion",
+    "lowering": "rust-unit",
+    "opcodes": ["op_is_big_int"],
+    "verification": "rust-unit",
+    "rust_test": "bigint_constants_keep_arbitrary_precision_and_type"
+  },
+  {
+    "id": "internal.promise-generator-allocation",
+    "family": "function_async_scope",
+    "lowering": "rust-unit",
+    "opcodes": ["op_create_promise", "op_new_generator"],
+    "verification": "rust-unit",
+    "rust_test": "tier1_internal_promise_and_generator_allocations_preserve_semantics"
+  },
+  {
+    "id": "internal.array-species",
+    "family": "object_property",
+    "lowering": "rust-unit",
+    "opcodes": ["op_new_array_with_species"],
+    "verification": "rust-unit",
+    "rust_test": "tier1_internal_array_species_uses_default_array_constructor"
+  },
+  {
+    "id": "internal.object-accessor-flags",
+    "family": "object_property",
+    "lowering": "rust-unit",
+    "opcodes": ["op_to_object", "op_define_accessor_property", "op_has_structure_with_flags"],
+    "verification": "rust-unit",
+    "rust_test": "tier1_internal_object_conversion_and_accessor_flags_match_jsc"
+  },
+  {
+    "id": "internal.property-key-identity",
+    "family": "numeric_coercion",
+    "lowering": "rust-unit",
+    "opcodes": ["op_to_property_key_or_number", "op_identity_with_profile"],
+    "verification": "rust-unit",
+    "rust_test": "tier1_internal_property_key_and_identity_preserve_values"
+  },
+  {
+    "id": "internal.scope-operations",
+    "family": "function_async_scope",
+    "lowering": "rust-unit",
+    "opcodes": [
+      "op_push_with_scope",
+      "op_create_generator_frame_environment",
+      "op_resolve_scope_for_hoisting_func_decl_in_eval",
+      "op_get_scope"
+    ],
+    "verification": "rust-unit",
+    "rust_test": "tier1_internal_scope_operations_keep_var_and_callee_scope_identity"
+  },
+  {
+    "id": "internal.predicates-yield",
+    "family": "numeric_coercion",
+    "lowering": "rust-unit",
+    "opcodes": ["op_is_undefined_or_null", "op_is_callable", "op_yield"],
+    "verification": "rust-unit",
+    "rust_test": "tier1_internal_predicates_and_yield_preserve_values"
   }
 ]

@@ -341,6 +341,38 @@ unsafe fn copy_source_text(
     }
 }
 
+unsafe fn copy_bigint_words(
+    words: *const u64,
+    len: usize,
+    negative: u32,
+) -> Result<VisitorConstantValue, ImportError> {
+    if len != 0 && words.is_null() {
+        return Err(ImportError::VisitorRejected("null BigInt word span".into()));
+    }
+    if negative > 1 {
+        return Err(ImportError::VisitorRejected("invalid BigInt sign".into()));
+    }
+    let words = if len == 0 {
+        &[]
+    } else {
+        // SAFETY: C++ keeps this callback-scoped word span alive until return.
+        unsafe { core::slice::from_raw_parts(words, len) }
+    };
+    let mut magnitude_be = Vec::with_capacity(words.len().saturating_mul(8));
+    for word in words.iter().rev() {
+        magnitude_be.extend_from_slice(&word.to_be_bytes());
+    }
+    let first_nonzero = magnitude_be
+        .iter()
+        .position(|byte| *byte != 0)
+        .unwrap_or(magnitude_be.len());
+    magnitude_be.drain(..first_nonzero);
+    Ok(VisitorConstantValue::BigInt {
+        negative: negative != 0 && !magnitude_be.is_empty(),
+        magnitude_be: magnitude_be.into_boxed_slice(),
+    })
+}
+
 fn scalar_constant_value(kind: u32, payload: u64) -> Result<VisitorConstantValue, ImportError> {
     match kind {
         0 => Ok(VisitorConstantValue::Empty),
@@ -449,6 +481,33 @@ extern "C" fn Bun__Hare__visitorConstantText(
 }
 
 #[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorConstantBigInt(
+    context: *mut c_void,
+    index: u32,
+    source_representation: u32,
+    negative: u32,
+    words: *const u64,
+    len: usize,
+) -> u32 {
+    callback_boundary(context, |context| {
+        let source_representation = constant_source_representation(source_representation)?;
+        // SAFETY: C++ retains the copied BigInt words for this synchronous callback.
+        let value = unsafe { copy_bigint_words(words, len, negative)? };
+        context
+            .builder
+            .as_mut()
+            .ok_or_else(|| ImportError::VisitorRejected("missing import builder".into()))?
+            .constant(
+                index,
+                VisitorConstant {
+                    value,
+                    source_representation,
+                },
+            )
+    })
+}
+
+#[unsafe(no_mangle)]
 extern "C" fn Bun__Hare__visitorBeginArrayConstant(
     context: *mut c_void,
     index: u32,
@@ -521,6 +580,33 @@ extern "C" fn Bun__Hare__visitorArrayConstantText(
             .replace(VisitorConstantValue::String(text))
             .is_some()
         {
+            return Err(ImportError::VisitorRejected(
+                "duplicate array constant element".into(),
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorArrayConstantBigInt(
+    context: *mut c_void,
+    element_index: u32,
+    negative: u32,
+    words: *const u64,
+    len: usize,
+) -> u32 {
+    callback_boundary(context, |context| {
+        // SAFETY: C++ retains the copied BigInt words for this synchronous callback.
+        let value = unsafe { copy_bigint_words(words, len, negative)? };
+        let pending = context.pending_array_constant.as_mut().ok_or_else(|| {
+            ImportError::VisitorRejected("array element without pending constant".into())
+        })?;
+        let element = pending
+            .elements
+            .get_mut(element_index as usize)
+            .ok_or_else(|| ImportError::VisitorRejected("array element index overflow".into()))?;
+        if element.replace(value).is_some() {
             return Err(ImportError::VisitorRejected(
                 "duplicate array constant element".into(),
             ));

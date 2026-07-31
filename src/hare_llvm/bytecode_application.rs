@@ -73,6 +73,12 @@ enum InternalObjectKind {
     Promise,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ArgumentsKind {
+    Direct,
+    Cloned,
+}
+
 fn builtin_is_callable(builtin: Builtin) -> bool {
     matches!(
         builtin,
@@ -99,16 +105,30 @@ struct ScalarFunction {
 
 type StaticEnvironmentRef = Rc<RefCell<StaticEnvironment>>;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StaticEnvironmentKind {
+    Var,
+    Lexical,
+    With,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StaticEnvironment {
+    kind: StaticEnvironmentKind,
     parent: Option<StaticEnvironmentRef>,
     object_scope: Option<RegisterValue>,
     bindings: BTreeMap<Box<str>, RegisterValue>,
+    scoped_argument_values: BTreeMap<usize, RegisterValue>,
+    scoped_argument_names: BTreeMap<Box<str>, usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum RegisterValue {
     Scalar(ScalarExpression),
+    BigInt {
+        negative: bool,
+        magnitude_be: Box<[u8]>,
+    },
     String(Box<str>),
     Concatenation(Vec<Self>),
     BooleanScalar(ScalarExpression),
@@ -149,7 +169,14 @@ enum RegisterValue {
         heap_id: u32,
         keys: Vec<Box<str>>,
     },
-    Arguments(Rc<RefCell<Vec<Self>>>),
+    Arguments {
+        kind: ArgumentsKind,
+        values: Rc<RefCell<Vec<Self>>>,
+    },
+    ScopedArguments {
+        environment: StaticEnvironmentRef,
+        length: Rc<Cell<usize>>,
+    },
     ExceptionObject(Box<Self>),
     Error {
         kind: u32,
@@ -163,9 +190,16 @@ enum RegisterValue {
         array_id: u32,
         next_index: Rc<Cell<u32>>,
     },
+    AsyncFromSyncIteratorNext,
+    AsyncFromSyncIterator {
+        array_id: u32,
+        next_index: Rc<Cell<u32>>,
+    },
+    FulfilledPromise(Box<Self>),
     InternalObject {
         identity: u32,
         kind: InternalObjectKind,
+        prototype: Option<Box<Self>>,
         fields: Rc<RefCell<BTreeMap<u32, Self>>>,
     },
     Spread(Vec<Self>),
@@ -540,18 +574,31 @@ fn lower_function(
     }
     let environment = explicit_environment.unwrap_or_else(|| {
         Rc::new(RefCell::new(StaticEnvironment {
+            kind: StaticEnvironmentKind::Var,
             parent: None,
             object_scope: None,
             bindings: BTreeMap::new(),
+            scoped_argument_values: BTreeMap::new(),
+            scoped_argument_names: BTreeMap::new(),
         }))
     });
-    registers.insert(scope_register, RegisterValue::Environment(environment));
+    registers.insert(
+        scope_register,
+        RegisterValue::Environment(environment.clone()),
+    );
     let this_value = explicit_this.unwrap_or(RegisterValue::Undefined);
     registers.insert(function.this_register as i64, this_value.clone());
     registers.insert(
         function.call_frame_this_argument_register as i64,
         this_value,
     );
+    let callee_scope = explicit_callee
+        .as_ref()
+        .and_then(|callee| match callee {
+            RegisterValue::Function { environment, .. } => environment.clone(),
+            _ => None,
+        })
+        .unwrap_or_else(|| environment.clone());
     if let Some(callee) = explicit_callee {
         registers.insert(function.call_frame_callee_register as i64, callee);
     }
@@ -796,7 +843,7 @@ fn lower_function(
             | "op_new_async_function_generator"
             | "op_new_promise" => {
                 let destination = signed_operand(instruction, "dst")?;
-                if matches!(
+                let prototype = if matches!(
                     descriptor.opcode,
                     "op_create_generator" | "op_create_async_generator" | "op_create_promise"
                 ) {
@@ -808,7 +855,21 @@ fn lower_function(
                     if !matches!(callee, RegisterValue::Function { .. }) {
                         return Err(unsupported(function, instruction, descriptor.opcode));
                     }
-                }
+                    let prototype = static_get_property(
+                        &state.heap,
+                        &callee,
+                        StaticPropertyKey::Name("prototype".into()),
+                    )?;
+                    matches!(
+                        prototype,
+                        RegisterValue::Object(_)
+                            | RegisterValue::Array(_)
+                            | RegisterValue::Function { .. }
+                    )
+                    .then(|| Box::new(prototype))
+                } else {
+                    None
+                };
                 let kind = match descriptor.opcode {
                     "op_create_generator" | "op_new_generator" => InternalObjectKind::Generator,
                     "op_create_async_generator" => InternalObjectKind::AsyncGenerator,
@@ -821,6 +882,7 @@ fn lower_function(
                     RegisterValue::InternalObject {
                         identity: state.allocate_internal_object_identity()?,
                         kind,
+                        prototype,
                         fields: Rc::new(RefCell::new(BTreeMap::new())),
                     },
                 );
@@ -871,13 +933,43 @@ fn lower_function(
                     },
                 );
             }
-            "op_create_direct_arguments"
-            | "op_create_scoped_arguments"
-            | "op_create_cloned_arguments" => {
+            "op_create_direct_arguments" | "op_create_cloned_arguments" => {
                 let destination = signed_operand(instruction, "dst")?;
+                let kind = if descriptor.opcode == "op_create_direct_arguments" {
+                    ArgumentsKind::Direct
+                } else {
+                    ArgumentsKind::Cloned
+                };
                 registers.insert(
                     destination,
-                    RegisterValue::Arguments(Rc::new(RefCell::new(parameter_values.clone()))),
+                    RegisterValue::Arguments {
+                        kind,
+                        values: Rc::new(RefCell::new(parameter_values.clone())),
+                    },
+                );
+            }
+            "op_create_scoped_arguments" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let scope =
+                    read_register(function, &registers, signed_operand(instruction, "scope")?)?;
+                let RegisterValue::Environment(environment) = scope else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                {
+                    let mut environment = environment.borrow_mut();
+                    for (index, value) in parameter_values.iter().cloned().enumerate() {
+                        environment
+                            .scoped_argument_values
+                            .entry(index)
+                            .or_insert(value);
+                    }
+                }
+                registers.insert(
+                    destination,
+                    RegisterValue::ScopedArguments {
+                        environment,
+                        length: Rc::new(Cell::new(parameter_values.len())),
+                    },
                 );
             }
             "op_argument_count" => {
@@ -912,7 +1004,11 @@ fn lower_function(
                     &registers,
                     signed_operand(instruction, "arguments")?,
                 )?;
-                let RegisterValue::Arguments(values) = arguments else {
+                let RegisterValue::Arguments {
+                    kind: ArgumentsKind::Direct,
+                    values,
+                } = arguments
+                else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 };
                 let index = usize::try_from(unsigned_operand(instruction, "index")?)
@@ -930,7 +1026,11 @@ fn lower_function(
                     &registers,
                     signed_operand(instruction, "arguments")?,
                 )?;
-                let RegisterValue::Arguments(values) = arguments else {
+                let RegisterValue::Arguments {
+                    kind: ArgumentsKind::Direct,
+                    values,
+                } = arguments
+                else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 };
                 let index = usize::try_from(unsigned_operand(instruction, "index")?)
@@ -1214,6 +1314,99 @@ fn lower_function(
                 };
                 registers.insert(done_register, RegisterValue::Boolean(done));
                 registers.insert(value_register, value);
+            }
+            "op_async_iterator_open" => {
+                let iterator_register = signed_operand(instruction, "iterator")?;
+                let next_register = signed_operand(instruction, "next")?;
+                let method = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "symbolIterator")?,
+                )?;
+                let iterable = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "iterable")?,
+                )?;
+                let _stack_offset = unsigned_operand(instruction, "stackOffset")?;
+                let RegisterValue::Array(array_id) = iterable else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                if !matches!(method, RegisterValue::Undefined | RegisterValue::Null) {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                }
+                registers.insert(
+                    iterator_register,
+                    RegisterValue::AsyncFromSyncIterator {
+                        array_id,
+                        next_index: Rc::new(Cell::new(0)),
+                    },
+                );
+                registers.insert(next_register, RegisterValue::AsyncFromSyncIteratorNext);
+            }
+            "op_async_iterator_next" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let next =
+                    read_register(function, &registers, signed_operand(instruction, "next")?)?;
+                let iterator = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "iterator")?,
+                )?;
+                let _driver =
+                    read_register(function, &registers, signed_operand(instruction, "driver")?)?;
+                let _has_value = boolean_operand(instruction, "hasValue")?;
+                let _stack_offset = unsigned_operand(instruction, "stackOffset")?;
+                let (
+                    RegisterValue::AsyncFromSyncIteratorNext,
+                    RegisterValue::AsyncFromSyncIterator {
+                        array_id,
+                        next_index,
+                    },
+                ) = (next, iterator)
+                else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let Some(StaticHeapEntry::Array {
+                    elements, length, ..
+                }) = state.heap.get(&array_id)
+                else {
+                    return Err(imported_error(
+                        "async-from-sync iterator references a missing static array",
+                    ));
+                };
+                let index = next_index.get();
+                let done = index >= *length;
+                let value = if done {
+                    RegisterValue::Undefined
+                } else {
+                    next_index.set(index + 1);
+                    elements
+                        .get(&index)
+                        .map(StaticProperty::read)
+                        .unwrap_or(RegisterValue::Undefined)
+                };
+                let result_id = state.allocate_heap_id()?;
+                state.heap.insert(
+                    result_id,
+                    StaticHeapEntry::Object {
+                        prototype: None,
+                        properties: BTreeMap::from([
+                            (
+                                "done".into(),
+                                StaticProperty::assigned(RegisterValue::Boolean(done)),
+                            ),
+                            ("value".into(), StaticProperty::assigned(value)),
+                        ]),
+                        property_order: vec!["value".into(), "done".into()],
+                        private_properties: BTreeMap::new(),
+                        private_brands: BTreeSet::new(),
+                    },
+                );
+                registers.insert(
+                    destination,
+                    RegisterValue::FulfilledPromise(Box::new(RegisterValue::Object(result_id))),
+                );
             }
             "op_new_array_with_spread" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -1679,9 +1872,16 @@ fn lower_function(
                 registers.insert(
                     destination,
                     RegisterValue::Environment(Rc::new(RefCell::new(StaticEnvironment {
+                        kind: if descriptor.opcode == "op_create_generator_frame_environment" {
+                            StaticEnvironmentKind::Var
+                        } else {
+                            StaticEnvironmentKind::Lexical
+                        },
                         parent,
                         object_scope: None,
                         bindings: BTreeMap::new(),
+                        scoped_argument_values: BTreeMap::new(),
+                        scoped_argument_names: BTreeMap::new(),
                     }))),
                 );
             }
@@ -1713,9 +1913,12 @@ fn lower_function(
                 registers.insert(
                     destination,
                     RegisterValue::Environment(Rc::new(RefCell::new(StaticEnvironment {
+                        kind: StaticEnvironmentKind::With,
                         parent,
                         object_scope: Some(new_scope),
                         bindings: BTreeMap::new(),
+                        scoped_argument_values: BTreeMap::new(),
+                        scoped_argument_names: BTreeMap::new(),
                     }))),
                 );
             }
@@ -1725,12 +1928,19 @@ fn lower_function(
                 let RegisterValue::Environment(environment) = scope else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 };
-                let identifier =
-                    identifier_string(function, unsigned_operand(instruction, "var")?)?;
-                let value =
-                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                let identifier_index = unsigned_operand(instruction, "var")?;
+                let identifier = if identifier_index == u64::from(u32::MAX) {
+                    None
+                } else {
+                    Some(identifier_string(function, identifier_index)?)
+                };
+                let value_register = signed_operand(instruction, "value")?;
+                let value = read_register(function, &registers, value_register)?;
                 let object_scope = environment.borrow().object_scope.clone();
                 if let Some(object_scope) = object_scope {
+                    let identifier = identifier.ok_or_else(|| {
+                        imported_error("anonymous scoped argument cannot target a with object")
+                    })?;
                     let assignment = static_set_property(
                         &mut state.heap,
                         &object_scope,
@@ -1748,14 +1958,45 @@ fn lower_function(
                         call_depth,
                     )?;
                 } else {
-                    environment.borrow_mut().bindings.insert(identifier, value);
+                    let get_put_info = unsigned_operand(instruction, "getPutInfo")?;
+                    let scoped_argument_initialization = (get_put_info >> 10) & 0b11 == 3;
+                    let mut environment = environment.borrow_mut();
+                    if scoped_argument_initialization {
+                        let index = value_register
+                            .checked_sub(i64::from(function.call_frame_first_argument_register))
+                            .and_then(|index| usize::try_from(index).ok())
+                            .ok_or_else(|| {
+                                imported_error(
+                                    "scoped argument initialization does not read an argument register",
+                                )
+                            })?;
+                        environment
+                            .scoped_argument_values
+                            .insert(index, value.clone());
+                        if let Some(identifier) = &identifier {
+                            environment
+                                .scoped_argument_names
+                                .insert(identifier.clone(), index);
+                        }
+                    } else if let Some(identifier) = &identifier
+                        && let Some(index) =
+                            environment.scoped_argument_names.get(identifier).copied()
+                    {
+                        environment
+                            .scoped_argument_values
+                            .insert(index, value.clone());
+                    }
+                    if let Some(identifier) = identifier {
+                        environment.bindings.insert(identifier, value);
+                    }
                 }
             }
             "op_get_scope" => {
                 let destination = signed_operand(instruction, "dst")?;
-                let scope =
-                    read_register(function, &registers, i64::from(function.scope_register))?;
-                registers.insert(destination, scope);
+                registers.insert(
+                    destination,
+                    RegisterValue::Environment(callee_scope.clone()),
+                );
             }
             "op_get_parent_scope" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -1801,7 +2042,7 @@ fn lower_function(
                 let destination = signed_operand(instruction, "dst")?;
                 let scope =
                     read_register(function, &registers, signed_operand(instruction, "scope")?)?;
-                let _property =
+                let property =
                     identifier_string(function, unsigned_operand(instruction, "property")?)?;
                 let RegisterValue::Environment(mut current) = scope else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
@@ -1809,8 +2050,19 @@ fn lower_function(
                 let mut resolved = None;
                 loop {
                     let borrowed = current.borrow();
-                    if borrowed.object_scope.is_none() {
-                        resolved = Some(current.clone());
+                    if borrowed.kind != StaticEnvironmentKind::With {
+                        let has_binding = borrowed.bindings.contains_key(&property)
+                            || borrowed.scoped_argument_names.contains_key(&property);
+                        if has_binding {
+                            if borrowed.kind == StaticEnvironmentKind::Var {
+                                resolved = Some(current.clone());
+                            }
+                            break;
+                        }
+                        if borrowed.kind == StaticEnvironmentKind::Var {
+                            resolved = Some(current.clone());
+                            break;
+                        }
                     }
                     let parent = borrowed.parent.clone();
                     drop(borrowed);
@@ -1933,7 +2185,9 @@ fn lower_function(
                     },
                     RegisterValue::String(value) => i64::try_from(value.encode_utf16().count())
                         .map_err(|_| imported_error("string length exceeds i64"))?,
-                    RegisterValue::Arguments(values) => i64::try_from(values.borrow().len())
+                    RegisterValue::Arguments { values, .. } => i64::try_from(values.borrow().len())
+                        .map_err(|_| imported_error("argument count exceeds i64"))?,
+                    RegisterValue::ScopedArguments { length, .. } => i64::try_from(length.get())
                         .map_err(|_| imported_error("argument count exceeds i64"))?,
                     _ => return Err(unsupported(function, instruction, descriptor.opcode)),
                 };
@@ -2390,23 +2644,12 @@ fn lower_function(
                     &registers,
                     signed_operand(instruction, "operand")?,
                 )?;
-                let _cell_type = unsigned_operand(instruction, "type")?;
-                let is_known_non_cell = matches!(
-                    value,
-                    RegisterValue::Scalar(_)
-                        | RegisterValue::BooleanScalar(_)
-                        | RegisterValue::Undefined
-                        | RegisterValue::Null
-                        | RegisterValue::Boolean(_)
-                        | RegisterValue::NaN
-                        | RegisterValue::NegativeZero
-                        | RegisterValue::PositiveInfinity
-                        | RegisterValue::NegativeInfinity
-                );
-                if !is_known_non_cell {
-                    return Err(unsupported(function, instruction, descriptor.opcode));
-                }
-                registers.insert(destination, RegisterValue::Boolean(false));
+                let cell_type = u8::try_from(unsigned_operand(instruction, "type")?)
+                    .map_err(|_| imported_error("JSC cell type exceeds u8"))?;
+                let result = known_cell_type(&value)
+                    .map(|actual| actual == cell_type)
+                    .unwrap_or(false);
+                registers.insert(destination, RegisterValue::Boolean(result));
             }
             "op_has_structure_with_flags" => {
                 const DID_PREVENT_EXTENSIONS: u32 = 1 << 20;
@@ -2567,6 +2810,26 @@ fn lower_function(
                     &registers,
                     signed_operand(instruction, "operand")?,
                 )?;
+                if matches!(value, RegisterValue::BigInt { .. }) {
+                    if descriptor.opcode == "op_to_numeric" {
+                        registers.insert(destination, value);
+                        instruction_index += 1;
+                        continue;
+                    }
+                    let thrown = RegisterValue::Error {
+                        kind: 5,
+                        message: "Cannot convert a BigInt value to a number".into(),
+                    };
+                    if let Some(target) =
+                        static_exception_target(function, instruction, &instruction_indices)?
+                    {
+                        pending_exception = Some(thrown);
+                        instruction_index = target;
+                        continue;
+                    }
+                    abrupt = Some(thrown);
+                    break;
+                }
                 let value = match value {
                     RegisterValue::Scalar(_)
                     | RegisterValue::NaN
@@ -2612,6 +2875,7 @@ fn lower_function(
                         | RegisterValue::BooleanScalar(_)
                         | RegisterValue::String(_)
                         | RegisterValue::Concatenation(_)
+                        | RegisterValue::BigInt { .. }
                         | RegisterValue::Undefined
                         | RegisterValue::Null
                         | RegisterValue::Boolean(_)
@@ -2658,8 +2922,11 @@ fn lower_function(
                         | RegisterValue::RegExp { .. }
                         | RegisterValue::Object(_)
                         | RegisterValue::Array(_)
-                        | RegisterValue::Arguments(_)
+                        | RegisterValue::Arguments { .. }
+                        | RegisterValue::ScopedArguments { .. }
                         | RegisterValue::InternalObject { .. }
+                        | RegisterValue::AsyncFromSyncIterator { .. }
+                        | RegisterValue::FulfilledPromise(_)
                         | RegisterValue::GlobalObject
                         | RegisterValue::ConsoleObject
                         | RegisterValue::Error { .. }
@@ -2751,8 +3018,11 @@ fn lower_function(
                         | RegisterValue::RegExp { .. }
                         | RegisterValue::Object(_)
                         | RegisterValue::Array(_)
-                        | RegisterValue::Arguments(_)
+                        | RegisterValue::Arguments { .. }
+                        | RegisterValue::ScopedArguments { .. }
                         | RegisterValue::InternalObject { .. }
+                        | RegisterValue::AsyncFromSyncIterator { .. }
+                        | RegisterValue::FulfilledPromise(_)
                         | RegisterValue::GlobalObject
                         | RegisterValue::ConsoleObject
                         | RegisterValue::Error { .. }
@@ -3398,6 +3668,7 @@ fn known_truthiness(
         | RegisterValue::NaN
         | RegisterValue::NegativeZero => Some(false),
         RegisterValue::String(value) => Some(!value.is_empty()),
+        RegisterValue::BigInt { magnitude_be, .. } => Some(!magnitude_be.is_empty()),
         RegisterValue::PositiveInfinity
         | RegisterValue::NegativeInfinity
         | RegisterValue::Function { .. }
@@ -3408,8 +3679,12 @@ fn known_truthiness(
         | RegisterValue::ConsoleLog
         | RegisterValue::Builtin(_)
         | RegisterValue::PrivateName { .. }
-        | RegisterValue::Arguments(_)
+        | RegisterValue::Arguments { .. }
+        | RegisterValue::ScopedArguments { .. }
         | RegisterValue::InternalObject { .. }
+        | RegisterValue::AsyncFromSyncIteratorNext
+        | RegisterValue::AsyncFromSyncIterator { .. }
+        | RegisterValue::FulfilledPromise(_)
         | RegisterValue::GlobalObject
         | RegisterValue::ExceptionObject(_)
         | RegisterValue::Error { .. } => Some(true),
@@ -3506,6 +3781,16 @@ fn known_strict_equality(
         | (RegisterValue::NegativeInfinity, RegisterValue::NegativeInfinity) => Some(true),
         (RegisterValue::NaN, _) | (_, RegisterValue::NaN) => Some(false),
         (RegisterValue::Boolean(left), RegisterValue::Boolean(right)) => Some(left == right),
+        (
+            RegisterValue::BigInt {
+                negative: left_negative,
+                magnitude_be: left_magnitude,
+            },
+            RegisterValue::BigInt {
+                negative: right_negative,
+                magnitude_be: right_magnitude,
+            },
+        ) => Some(left_negative == right_negative && left_magnitude == right_magnitude),
         (RegisterValue::String(left), RegisterValue::String(right)) => Some(left == right),
         (
             RegisterValue::PrivateName { identity: left, .. },
@@ -3563,16 +3848,22 @@ fn known_js_type(value: &RegisterValue) -> Option<&'static str> {
         | RegisterValue::PositiveInfinity
         | RegisterValue::NegativeInfinity => Some("number"),
         RegisterValue::String(_) | RegisterValue::Concatenation(_) => Some("string"),
+        RegisterValue::BigInt { .. } => Some("bigint"),
         RegisterValue::PrivateName { .. } => Some("symbol"),
-        RegisterValue::Function { .. } | RegisterValue::ConsoleLog => Some("function"),
+        RegisterValue::Function { .. }
+        | RegisterValue::ConsoleLog
+        | RegisterValue::AsyncFromSyncIteratorNext => Some("function"),
         RegisterValue::Builtin(builtin) if builtin_is_callable(*builtin) => Some("function"),
         RegisterValue::Builtin(Builtin::SentinelString) => Some("string"),
         RegisterValue::Builtin(Builtin::EmptyPropertyNameEnumerator) => Some("object"),
         RegisterValue::RegExp { .. }
         | RegisterValue::Object(_)
         | RegisterValue::Array(_)
-        | RegisterValue::Arguments(_)
+        | RegisterValue::Arguments { .. }
+        | RegisterValue::ScopedArguments { .. }
         | RegisterValue::InternalObject { .. }
+        | RegisterValue::AsyncFromSyncIterator { .. }
+        | RegisterValue::FulfilledPromise(_)
         | RegisterValue::GlobalObject
         | RegisterValue::ConsoleObject
         | RegisterValue::ExceptionObject(_)
@@ -3624,7 +3915,20 @@ fn static_argument_values(
     first: usize,
 ) -> Result<Vec<RegisterValue>, LlvmError> {
     let values = match arguments {
-        RegisterValue::Arguments(values) => values.borrow().clone(),
+        RegisterValue::Arguments { values, .. } => values.borrow().clone(),
+        RegisterValue::ScopedArguments {
+            environment,
+            length,
+        } => (0..length.get())
+            .map(|index| {
+                environment
+                    .borrow()
+                    .scoped_argument_values
+                    .get(&index)
+                    .cloned()
+                    .unwrap_or(RegisterValue::Undefined)
+            })
+            .collect(),
         RegisterValue::Spread(values) => values.clone(),
         RegisterValue::Array(id) => {
             let Some(StaticHeapEntry::Array {
@@ -3729,6 +4033,13 @@ fn register_constant_value(
         VisitorConstantValue::String(value) => {
             RegisterValue::String(source_text_to_string(value)?.into_boxed_str())
         }
+        VisitorConstantValue::BigInt {
+            negative,
+            magnitude_be,
+        } => RegisterValue::BigInt {
+            negative: *negative,
+            magnitude_be: magnitude_be.clone(),
+        },
         VisitorConstantValue::RegExp { pattern, flags } => RegisterValue::RegExpTemplate {
             pattern: pattern.clone(),
             flags: *flags,
@@ -3808,6 +4119,7 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
             | RegisterValue::BooleanScalar(_)
             | RegisterValue::String(_)
             | RegisterValue::Concatenation(_)
+            | RegisterValue::BigInt { .. }
             | RegisterValue::Function { .. }
             | RegisterValue::RegExp { .. }
             | RegisterValue::Object(_)
@@ -3816,8 +4128,12 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
             | RegisterValue::ConsoleLog
             | RegisterValue::Builtin(_)
             | RegisterValue::PrivateName { .. }
-            | RegisterValue::Arguments(_)
+            | RegisterValue::Arguments { .. }
+            | RegisterValue::ScopedArguments { .. }
             | RegisterValue::InternalObject { .. }
+            | RegisterValue::AsyncFromSyncIteratorNext
+            | RegisterValue::AsyncFromSyncIterator { .. }
+            | RegisterValue::FulfilledPromise(_)
             | RegisterValue::GlobalObject
             | RegisterValue::ExceptionObject(_)
             | RegisterValue::Error { .. }
@@ -3848,8 +4164,11 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
                 | RegisterValue::RegExp { .. }
                 | RegisterValue::Object(_)
                 | RegisterValue::Array(_)
-                | RegisterValue::Arguments(_)
+                | RegisterValue::Arguments { .. }
+                | RegisterValue::ScopedArguments { .. }
                 | RegisterValue::InternalObject { .. }
+                | RegisterValue::AsyncFromSyncIterator { .. }
+                | RegisterValue::FulfilledPromise(_)
                 | RegisterValue::GlobalObject
                 | RegisterValue::ConsoleObject
                 | RegisterValue::ExceptionObject(_)
@@ -3858,7 +4177,9 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
         "op_typeof_is_function" => Some(
             matches!(
                 value,
-                RegisterValue::Function { .. } | RegisterValue::ConsoleLog
+                RegisterValue::Function { .. }
+                    | RegisterValue::ConsoleLog
+                    | RegisterValue::AsyncFromSyncIteratorNext
             ) || matches!(value, RegisterValue::Builtin(builtin) if builtin_is_callable(*builtin)),
         ),
         "op_is_undefined_or_null" => Some(matches!(
@@ -3877,7 +4198,7 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
                 | RegisterValue::PositiveInfinity
                 | RegisterValue::NegativeInfinity
         )),
-        "op_is_big_int" => Some(false),
+        "op_is_big_int" => Some(matches!(value, RegisterValue::BigInt { .. })),
         "op_is_object" => Some(
             matches!(
                 value,
@@ -3885,11 +4206,15 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
                     | RegisterValue::RegExp { .. }
                     | RegisterValue::Object(_)
                     | RegisterValue::Array(_)
-                    | RegisterValue::Arguments(_)
+                    | RegisterValue::Arguments { .. }
+                    | RegisterValue::ScopedArguments { .. }
                     | RegisterValue::InternalObject { .. }
+                    | RegisterValue::AsyncFromSyncIterator { .. }
+                    | RegisterValue::FulfilledPromise(_)
                     | RegisterValue::GlobalObject
                     | RegisterValue::ConsoleObject
                     | RegisterValue::ConsoleLog
+                    | RegisterValue::AsyncFromSyncIteratorNext
                     | RegisterValue::ExceptionObject(_)
                     | RegisterValue::Error { .. }
             ) || matches!(value, RegisterValue::Builtin(builtin) if builtin_is_callable(*builtin)),
@@ -3897,7 +4222,9 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
         "op_is_callable" => Some(
             matches!(
                 value,
-                RegisterValue::Function { .. } | RegisterValue::ConsoleLog
+                RegisterValue::Function { .. }
+                    | RegisterValue::ConsoleLog
+                    | RegisterValue::AsyncFromSyncIteratorNext
             ) || matches!(value, RegisterValue::Builtin(builtin) if builtin_is_callable(*builtin)),
         ),
         "op_is_constructor" => match value {
@@ -3907,6 +4234,60 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
             _ => Some(false),
         },
         _ => None,
+    }
+}
+
+fn known_cell_type(value: &RegisterValue) -> Option<u8> {
+    match value {
+        RegisterValue::String(_) | RegisterValue::Concatenation(_) => Some(2),
+        RegisterValue::BigInt { .. } => Some(3),
+        RegisterValue::PrivateName { .. } => Some(4),
+        RegisterValue::Function { .. } => Some(36),
+        RegisterValue::ConsoleLog
+        | RegisterValue::ArrayIteratorMethod
+        | RegisterValue::ArrayIteratorNext
+        | RegisterValue::AsyncFromSyncIteratorNext
+        | RegisterValue::Builtin(_) => Some(37),
+        RegisterValue::Error { .. } | RegisterValue::ExceptionObject(_) => Some(41),
+        RegisterValue::Arguments { kind, .. } => Some(match kind {
+            ArgumentsKind::Direct => 43,
+            ArgumentsKind::Cloned => 45,
+        }),
+        RegisterValue::ScopedArguments { .. } => Some(44),
+        RegisterValue::Array(_) | RegisterValue::ArrayTemplate(_) => Some(46),
+        RegisterValue::GlobalObject => Some(62),
+        RegisterValue::Environment(_) => Some(64),
+        RegisterValue::RegExp { .. } | RegisterValue::RegExpTemplate { .. } => Some(72),
+        RegisterValue::ArrayIterator { .. } => Some(78),
+        RegisterValue::InternalObject { kind, .. } => Some(match kind {
+            InternalObjectKind::Generator | InternalObjectKind::AsyncFunctionGenerator => 75,
+            InternalObjectKind::AsyncGenerator => 77,
+            InternalObjectKind::Promise => 87,
+        }),
+        RegisterValue::FulfilledPromise(_) => Some(87),
+        RegisterValue::Object(_)
+        | RegisterValue::AsyncFromSyncIterator { .. }
+        | RegisterValue::ConsoleObject => Some(34),
+        RegisterValue::Enumerator { .. } => Some(34),
+        RegisterValue::Scalar(_)
+        | RegisterValue::BooleanScalar(_)
+        | RegisterValue::ConsoleScope
+        | RegisterValue::NaNScope
+        | RegisterValue::InfinityScope
+        | RegisterValue::UndefinedScope
+        | RegisterValue::BuiltinScope(_)
+        | RegisterValue::AccessorGetter(_)
+        | RegisterValue::ConsoleNoArgument
+        | RegisterValue::Spread(_)
+        | RegisterValue::Empty
+        | RegisterValue::Undefined
+        | RegisterValue::Null
+        | RegisterValue::Boolean(_)
+        | RegisterValue::NaN
+        | RegisterValue::NegativeZero
+        | RegisterValue::PositiveInfinity
+        | RegisterValue::NegativeInfinity
+        | RegisterValue::Opaque => None,
     }
 }
 
@@ -3920,8 +4301,11 @@ fn known_typeof(value: &RegisterValue) -> Option<&'static str> {
         | RegisterValue::PositiveInfinity
         | RegisterValue::NegativeInfinity => Some("number"),
         RegisterValue::String(_) | RegisterValue::Concatenation(_) => Some("string"),
+        RegisterValue::BigInt { .. } => Some("bigint"),
         RegisterValue::PrivateName { .. } => Some("symbol"),
-        RegisterValue::Function { .. } | RegisterValue::ConsoleLog => Some("function"),
+        RegisterValue::Function { .. }
+        | RegisterValue::ConsoleLog
+        | RegisterValue::AsyncFromSyncIteratorNext => Some("function"),
         RegisterValue::Builtin(builtin) if builtin_is_callable(*builtin) => Some("function"),
         RegisterValue::Builtin(Builtin::SentinelString) => Some("string"),
         RegisterValue::Builtin(Builtin::EmptyPropertyNameEnumerator) => Some("object"),
@@ -3929,8 +4313,11 @@ fn known_typeof(value: &RegisterValue) -> Option<&'static str> {
         | RegisterValue::RegExp { .. }
         | RegisterValue::Object(_)
         | RegisterValue::Array(_)
-        | RegisterValue::Arguments(_)
+        | RegisterValue::Arguments { .. }
+        | RegisterValue::ScopedArguments { .. }
         | RegisterValue::InternalObject { .. }
+        | RegisterValue::AsyncFromSyncIterator { .. }
+        | RegisterValue::FulfilledPromise(_)
         | RegisterValue::GlobalObject
         | RegisterValue::ConsoleObject
         | RegisterValue::ExceptionObject(_)
@@ -3946,6 +4333,7 @@ fn is_admitted_primitive(value: &RegisterValue) -> bool {
             | RegisterValue::BooleanScalar(_)
             | RegisterValue::String(_)
             | RegisterValue::Concatenation(_)
+            | RegisterValue::BigInt { .. }
             | RegisterValue::Undefined
             | RegisterValue::Null
             | RegisterValue::Boolean(_)
@@ -4019,6 +4407,13 @@ fn append_console_string(
             }
         }
         RegisterValue::String(value) => output.push_str(value),
+        RegisterValue::BigInt {
+            negative,
+            magnitude_be,
+        } => {
+            output.push_str(&bigint_decimal(*negative, magnitude_be));
+            output.push('n');
+        }
         RegisterValue::ConsoleNoArgument => {}
         RegisterValue::Concatenation(values) => {
             for value in values {
@@ -4044,6 +4439,10 @@ fn append_js_string(
 ) -> Result<(), LlvmError> {
     match value {
         RegisterValue::NegativeZero => output.push('0'),
+        RegisterValue::BigInt {
+            negative,
+            magnitude_be,
+        } => output.push_str(&bigint_decimal(*negative, magnitude_be)),
         RegisterValue::Concatenation(values) => {
             for value in values {
                 append_js_string(value, functions, output)?;
@@ -4052,6 +4451,36 @@ fn append_js_string(
         _ => append_console_string(value, functions, output)?,
     }
     Ok(())
+}
+
+fn bigint_decimal(negative: bool, magnitude_be: &[u8]) -> String {
+    const RADIX: u64 = 1_000_000_000;
+    if magnitude_be.is_empty() {
+        return "0".into();
+    }
+    let mut limbs = vec![0_u32];
+    for byte in magnitude_be {
+        let mut carry = u64::from(*byte);
+        for limb in &mut limbs {
+            let value = u64::from(*limb) * 256 + carry;
+            *limb = (value % RADIX) as u32;
+            carry = value / RADIX;
+        }
+        if carry != 0 {
+            limbs.push(carry as u32);
+        }
+    }
+    let mut output = if negative {
+        String::from("-")
+    } else {
+        String::new()
+    };
+    let most_significant = limbs.pop().unwrap();
+    write!(output, "{most_significant}").unwrap();
+    for limb in limbs.iter().rev() {
+        write!(output, "{limb:09}").unwrap();
+    }
+    output
 }
 
 fn child_function(
@@ -4151,6 +4580,11 @@ fn environment_binding(
         return Ok(None);
     };
     let borrowed = resolved.borrow();
+    if let Some(index) = borrowed.scoped_argument_names.get(identifier)
+        && let Some(value) = borrowed.scoped_argument_values.get(index)
+    {
+        return Ok(Some(value.clone()));
+    }
     if let Some(value) = borrowed.bindings.get(identifier) {
         return Ok(Some(value.clone()));
     }
@@ -4444,6 +4878,9 @@ fn static_prototype_value(
             .map(|id| static_heap_value(heap, id))
             .transpose()
             .map(|value| value.unwrap_or(RegisterValue::Null)),
+        RegisterValue::InternalObject { prototype, .. } => {
+            Ok(prototype.as_deref().cloned().unwrap_or(RegisterValue::Null))
+        }
         _ => Err(imported_error(
             "prototype lookup base is not a static object",
         )),
@@ -4554,7 +4991,7 @@ fn static_get_property(
     {
         return Ok(RegisterValue::ArrayIteratorMethod);
     }
-    if let RegisterValue::Arguments(values) = base {
+    if let RegisterValue::Arguments { values, .. } = base {
         let values = values.borrow();
         return match key {
             StaticPropertyKey::Index(index) => Ok(values
@@ -4571,6 +5008,33 @@ fn static_get_property(
                 .and_then(|index| values.get(index as usize).cloned())
                 .map(Ok)
                 .unwrap_or(Ok(RegisterValue::Undefined)),
+        };
+    }
+    if let RegisterValue::ScopedArguments {
+        environment,
+        length,
+    } = base
+    {
+        let index = match &key {
+            StaticPropertyKey::Index(index) => Some(*index),
+            StaticPropertyKey::Name(name) => canonical_array_index(name),
+        };
+        if let Some(index) = index {
+            return Ok(environment
+                .borrow()
+                .scoped_argument_values
+                .get(&(index as usize))
+                .cloned()
+                .unwrap_or(RegisterValue::Undefined));
+        }
+        return match key {
+            StaticPropertyKey::Name(name) if name.as_ref() == "length" => {
+                Ok(RegisterValue::Scalar(ScalarExpression::Integer(
+                    i64::try_from(length.get())
+                        .map_err(|_| imported_error("argument count exceeds i64"))?,
+                )))
+            }
+            _ => Ok(RegisterValue::Undefined),
         };
     }
     if let RegisterValue::Error { kind, message } = base {
@@ -4606,7 +5070,9 @@ fn static_get_own_property(
 ) -> Result<RegisterValue, LlvmError> {
     if matches!(
         base,
-        RegisterValue::Arguments(_) | RegisterValue::Error { .. }
+        RegisterValue::Arguments { .. }
+            | RegisterValue::ScopedArguments { .. }
+            | RegisterValue::Error { .. }
     ) {
         return static_get_property(heap, base, key);
     }
@@ -4934,7 +5400,7 @@ fn static_set_property(
     key: StaticPropertyKey,
     value: RegisterValue,
 ) -> Result<StaticPropertyAssignment, LlvmError> {
-    if let RegisterValue::Arguments(values) = base {
+    if let RegisterValue::Arguments { values, .. } = base {
         let index = match key {
             StaticPropertyKey::Index(index) => Some(index),
             StaticPropertyKey::Name(name) => canonical_array_index(&name),
@@ -4951,6 +5417,39 @@ fn static_set_property(
             values.resize(index + 1, RegisterValue::Undefined);
         }
         values[index] = value;
+        return Ok(StaticPropertyAssignment::Stored);
+    }
+    if let RegisterValue::ScopedArguments {
+        environment,
+        length,
+    } = base
+    {
+        let index = match key {
+            StaticPropertyKey::Index(index) => Some(index),
+            StaticPropertyKey::Name(name) => canonical_array_index(&name),
+        };
+        let Some(index) = index else {
+            return Err(imported_error(
+                "scoped arguments object write requires an array-index property",
+            ));
+        };
+        let index = usize::try_from(index)
+            .map_err(|_| imported_error("arguments object index exceeds usize"))?;
+        environment
+            .borrow_mut()
+            .scoped_argument_values
+            .insert(index, value.clone());
+        let name = {
+            let environment = environment.borrow();
+            environment
+                .scoped_argument_names
+                .iter()
+                .find_map(|(name, mapped)| (*mapped == index).then(|| name.clone()))
+        };
+        if let Some(name) = name {
+            environment.borrow_mut().bindings.insert(name, value);
+        }
+        length.set(length.get().max(index.saturating_add(1)));
         return Ok(StaticPropertyAssignment::Stored);
     }
     let id = match base {
@@ -5845,6 +6344,23 @@ fn unsigned_operand(instruction: &VisitorInstruction, name: &str) -> Result<u64,
         })
 }
 
+fn boolean_operand(instruction: &VisitorInstruction, name: &str) -> Result<bool, LlvmError> {
+    instruction
+        .operands
+        .iter()
+        .find(|operand| operand.manifest_id.rsplit('.').next() == Some(name))
+        .and_then(|operand| match operand.value {
+            OperandValue::Boolean(value) => Some(value),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            imported_error(format!(
+                "opcode {} has no boolean {name}",
+                instruction.opcode_id
+            ))
+        })
+}
+
 fn unsupported(
     function: &VisitorFunction,
     instruction: &VisitorInstruction,
@@ -6389,7 +6905,11 @@ fn imported_error(message: impl Into<String>) -> LlvmError {
 
 #[cfg(test)]
 mod tests {
-    use hare_ir::{HARE_IR_SCHEMA_VERSION, InputKind, SourceId, SourceRecord};
+    use hare_frontend::ImportedValueKind;
+    use hare_ir::{
+        ConstantSourceRepresentation, HARE_IR_SCHEMA_VERSION, InputKind, SourceId, SourceRecord,
+        VisitorConstant, VisitorOperand,
+    };
 
     use super::*;
 
@@ -6508,5 +7028,859 @@ mod tests {
         assert!(ir.contains(" = trunc i64 "));
         assert!(ir.contains(" = lshr i32 "));
         assert!(ir.contains(" = zext i32 "));
+    }
+
+    fn instruction(opcode: &str, values: &[(&str, OperandValue)]) -> VisitorInstruction {
+        let descriptor = hare_frontend::inventories()
+            .into_iter()
+            .flatten()
+            .find(|descriptor| descriptor.opcode == opcode)
+            .unwrap();
+        let operands = descriptor
+            .operands
+            .iter()
+            .map(|operand| VisitorOperand {
+                manifest_id: operand.manifest_id.into(),
+                role: operand.role,
+                value: values
+                    .iter()
+                    .find(|(name, _)| *name == operand.name)
+                    .map(|(_, value)| value.clone())
+                    .unwrap_or_else(|| match operand.value_kind {
+                        ImportedValueKind::Signed => OperandValue::Signed(0),
+                        ImportedValueKind::Unsigned => OperandValue::Unsigned(0),
+                        ImportedValueKind::Boolean => OperandValue::Boolean(false),
+                    }),
+            })
+            .collect();
+        VisitorInstruction {
+            byte_offset: 0,
+            opcode_id: u32::from(descriptor.opcode_id),
+            encoded_size: 1,
+            opcode_id_bytes: 1,
+            width_bytes: 1,
+            operands,
+        }
+    }
+
+    fn test_function(
+        constants: Vec<VisitorConstant>,
+        instructions: Vec<VisitorInstruction>,
+    ) -> VisitorFunction {
+        VisitorFunction {
+            id: FunctionId(0),
+            parent: None,
+            relation: FunctionRelation::Root,
+            specialization: FunctionSpecialization::Module,
+            source: SourceId(0),
+            parse_mode: 0,
+            script_mode: 0,
+            code_type: 0,
+            lexical_features: 0,
+            code_features: 0,
+            num_parameters: 1,
+            num_vars: 32,
+            num_callee_locals: 32,
+            this_register: 5,
+            scope_register: -1,
+            call_frame_callee_register: 3,
+            call_frame_this_argument_register: 5,
+            call_frame_first_argument_register: 6,
+            constants,
+            identifiers: Vec::new(),
+            simple_switch_tables: Vec::new(),
+            string_switch_tables: Vec::new(),
+            exception_handlers: Vec::new(),
+            instruction_bytes: instructions.len() as u32,
+            instructions,
+        }
+    }
+
+    fn test_unit(functions: Vec<VisitorFunction>) -> OwnedVisitorUnit {
+        OwnedVisitorUnit {
+            schema_version: HARE_IR_SCHEMA_VERSION,
+            bun_revision: hare_ir::PINNED_BUN_REVISION.into(),
+            webkit_revision: hare_ir::PINNED_WEBKIT_REVISION.into(),
+            input_kind: InputKind::ModuleProgram,
+            sources: vec![SourceRecord {
+                id: SourceId(0),
+                public_name: "opcode-case.js".into(),
+                text: SourceText::Latin1(Box::default()),
+                start_line: 1,
+                start_column: 0,
+            }],
+            functions,
+            definition_coverage: BTreeMap::new(),
+            structurally_complete: true,
+        }
+    }
+
+    fn lower_test_function(
+        function: VisitorFunction,
+        explicit_arguments: Option<&[RegisterValue]>,
+    ) -> (LoweredBody, StaticExecutionState) {
+        let mut state = StaticExecutionState::default();
+        let body =
+            lower_test_function_with_context(function, explicit_arguments, None, None, &mut state);
+        (body, state)
+    }
+
+    fn lower_test_function_with_context(
+        function: VisitorFunction,
+        explicit_arguments: Option<&[RegisterValue]>,
+        explicit_environment: Option<StaticEnvironmentRef>,
+        explicit_callee: Option<RegisterValue>,
+        state: &mut StaticExecutionState,
+    ) -> LoweredBody {
+        let unit = test_unit(vec![function.clone()]);
+        lower_function(
+            &unit,
+            &function,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            explicit_arguments,
+            explicit_environment,
+            None,
+            explicit_callee,
+            state,
+            0,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn async_from_sync_array_iterator_preserves_value_and_done_order() {
+        let array_template = FIRST_CONSTANT_REGISTER_INDEX;
+        let undefined = FIRST_CONSTANT_REGISTER_INDEX + 1;
+        let function = test_function(
+            vec![
+                VisitorConstant {
+                    value: VisitorConstantValue::ImmutableArray {
+                        elements: vec![
+                            VisitorConstantValue::Int32(40),
+                            VisitorConstantValue::Int32(2),
+                        ],
+                        indexing_type: 0,
+                    },
+                    source_representation: ConstantSourceRepresentation::Other,
+                },
+                VisitorConstant {
+                    value: VisitorConstantValue::Undefined,
+                    source_representation: ConstantSourceRepresentation::Other,
+                },
+            ],
+            vec![
+                instruction(
+                    "op_new_array_buffer",
+                    &[
+                        ("dst", OperandValue::Signed(-2)),
+                        ("immutableButterfly", OperandValue::Signed(array_template)),
+                    ],
+                ),
+                instruction(
+                    "op_async_iterator_open",
+                    &[
+                        ("iterator", OperandValue::Signed(-3)),
+                        ("next", OperandValue::Signed(-4)),
+                        ("symbolIterator", OperandValue::Signed(undefined)),
+                        ("iterable", OperandValue::Signed(-2)),
+                    ],
+                ),
+                instruction(
+                    "op_async_iterator_next",
+                    &[
+                        ("dst", OperandValue::Signed(-5)),
+                        ("next", OperandValue::Signed(-4)),
+                        ("iterator", OperandValue::Signed(-3)),
+                        ("driver", OperandValue::Signed(undefined)),
+                    ],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-5))]),
+            ],
+        );
+        let (body, state) = lower_test_function(function, None);
+        let Some(RegisterValue::FulfilledPromise(result)) = body.result else {
+            panic!("async-from-sync next did not return a fulfilled promise");
+        };
+        assert_eq!(
+            static_get_property(
+                &state.heap,
+                &result,
+                StaticPropertyKey::Name("value".into())
+            )
+            .unwrap(),
+            RegisterValue::Scalar(ScalarExpression::Integer(40))
+        );
+        assert_eq!(
+            static_get_property(&state.heap, &result, StaticPropertyKey::Name("done".into()))
+                .unwrap(),
+            RegisterValue::Boolean(false)
+        );
+    }
+
+    #[test]
+    fn direct_arguments_reads_observe_indexed_writes() {
+        let forty_two = FIRST_CONSTANT_REGISTER_INDEX;
+        let function = test_function(
+            vec![VisitorConstant {
+                value: VisitorConstantValue::Int32(42),
+                source_representation: ConstantSourceRepresentation::Integer,
+            }],
+            vec![
+                instruction(
+                    "op_create_direct_arguments",
+                    &[("dst", OperandValue::Signed(-2))],
+                ),
+                instruction(
+                    "op_put_to_arguments",
+                    &[
+                        ("arguments", OperandValue::Signed(-2)),
+                        ("index", OperandValue::Unsigned(0)),
+                        ("value", OperandValue::Signed(forty_two)),
+                    ],
+                ),
+                instruction(
+                    "op_get_from_arguments",
+                    &[
+                        ("dst", OperandValue::Signed(-3)),
+                        ("arguments", OperandValue::Signed(-2)),
+                        ("index", OperandValue::Unsigned(0)),
+                    ],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-3))]),
+            ],
+        );
+        let (body, _) = lower_test_function(
+            function,
+            Some(&[RegisterValue::Scalar(ScalarExpression::Integer(41))]),
+        );
+        assert_eq!(
+            body.result,
+            Some(RegisterValue::Scalar(ScalarExpression::Integer(42)))
+        );
+    }
+
+    #[test]
+    fn scoped_arguments_and_named_parameter_share_storage() {
+        let symbol_table = FIRST_CONSTANT_REGISTER_INDEX;
+        let undefined = FIRST_CONSTANT_REGISTER_INDEX + 1;
+        let zero = FIRST_CONSTANT_REGISTER_INDEX + 2;
+        let forty_two = FIRST_CONSTANT_REGISTER_INDEX + 3;
+        let mut function = test_function(
+            vec![
+                VisitorConstant {
+                    value: VisitorConstantValue::UnimplementedCell("SymbolTable".into()),
+                    source_representation: ConstantSourceRepresentation::Other,
+                },
+                VisitorConstant {
+                    value: VisitorConstantValue::Undefined,
+                    source_representation: ConstantSourceRepresentation::Other,
+                },
+                VisitorConstant {
+                    value: VisitorConstantValue::Int32(0),
+                    source_representation: ConstantSourceRepresentation::Integer,
+                },
+                VisitorConstant {
+                    value: VisitorConstantValue::Int32(42),
+                    source_representation: ConstantSourceRepresentation::Integer,
+                },
+            ],
+            vec![
+                instruction(
+                    "op_create_lexical_environment",
+                    &[
+                        ("dst", OperandValue::Signed(-2)),
+                        ("scope", OperandValue::Signed(-1)),
+                        ("symbolTable", OperandValue::Signed(symbol_table)),
+                        ("initialValue", OperandValue::Signed(undefined)),
+                    ],
+                ),
+                instruction(
+                    "op_put_to_scope",
+                    &[
+                        ("scope", OperandValue::Signed(-2)),
+                        ("var", OperandValue::Unsigned(0)),
+                        ("value", OperandValue::Signed(6)),
+                        ("getPutInfo", OperandValue::Unsigned(3 << 10)),
+                    ],
+                ),
+                instruction(
+                    "op_create_scoped_arguments",
+                    &[
+                        ("dst", OperandValue::Signed(-3)),
+                        ("scope", OperandValue::Signed(-2)),
+                    ],
+                ),
+                instruction(
+                    "op_put_by_val",
+                    &[
+                        ("base", OperandValue::Signed(-3)),
+                        ("property", OperandValue::Signed(zero)),
+                        ("value", OperandValue::Signed(forty_two)),
+                    ],
+                ),
+                instruction(
+                    "op_get_from_scope",
+                    &[
+                        ("dst", OperandValue::Signed(-4)),
+                        ("scope", OperandValue::Signed(-2)),
+                        ("var", OperandValue::Unsigned(0)),
+                    ],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-4))]),
+            ],
+        );
+        function
+            .identifiers
+            .push(SourceText::Latin1(b"value".to_vec().into_boxed_slice()));
+        let (body, _) = lower_test_function(
+            function,
+            Some(&[RegisterValue::Scalar(ScalarExpression::Integer(41))]),
+        );
+        assert_eq!(
+            body.result,
+            Some(RegisterValue::Scalar(ScalarExpression::Integer(42)))
+        );
+    }
+
+    #[test]
+    fn bigint_constants_keep_arbitrary_precision_and_type() {
+        let bigint = FIRST_CONSTANT_REGISTER_INDEX;
+        let function = test_function(
+            vec![VisitorConstant {
+                value: VisitorConstantValue::BigInt {
+                    negative: true,
+                    magnitude_be: vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 1].into_boxed_slice(),
+                },
+                source_representation: ConstantSourceRepresentation::Other,
+            }],
+            vec![
+                instruction(
+                    "op_is_big_int",
+                    &[
+                        ("dst", OperandValue::Signed(-2)),
+                        ("operand", OperandValue::Signed(bigint)),
+                    ],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-2))]),
+            ],
+        );
+        let (body, _) = lower_test_function(function, None);
+        assert_eq!(body.result, Some(RegisterValue::Boolean(true)));
+        assert_eq!(
+            bigint_decimal(true, &[1, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+            "-4722366482869645213697"
+        );
+        assert_eq!(
+            normalize_write(
+                RegisterValue::BigInt {
+                    negative: false,
+                    magnitude_be: Box::new([42]),
+                },
+                &BTreeMap::new(),
+            )
+            .unwrap(),
+            NativeWrite::Text(b"42n\n".to_vec().into_boxed_slice())
+        );
+    }
+
+    #[test]
+    fn tier1_internal_promise_and_generator_allocations_preserve_semantics() {
+        let mut state = StaticExecutionState::default();
+        state.heap.insert(
+            1,
+            StaticHeapEntry::Object {
+                prototype: None,
+                properties: BTreeMap::new(),
+                property_order: Vec::new(),
+                private_properties: BTreeMap::new(),
+                private_brands: BTreeSet::new(),
+            },
+        );
+        state.heap.insert(
+            0,
+            StaticHeapEntry::Function {
+                prototype: None,
+                properties: BTreeMap::from([(
+                    "prototype".into(),
+                    StaticProperty::assigned(RegisterValue::Object(1)),
+                )]),
+                property_order: vec!["prototype".into()],
+                private_properties: BTreeMap::new(),
+                private_brands: BTreeSet::new(),
+            },
+        );
+        state.next_heap_id = 2;
+        let callee = RegisterValue::Function {
+            call: FunctionId(0),
+            construct: Some(FunctionId(0)),
+            environment: None,
+            identity: 0,
+            heap_id: 0,
+        };
+        let promise = test_function(
+            Vec::new(),
+            vec![
+                instruction(
+                    "op_create_promise",
+                    &[
+                        ("dst", OperandValue::Signed(-2)),
+                        ("callee", OperandValue::Signed(3)),
+                    ],
+                ),
+                instruction(
+                    "op_get_prototype_of",
+                    &[
+                        ("dst", OperandValue::Signed(-3)),
+                        ("value", OperandValue::Signed(-2)),
+                    ],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-3))]),
+            ],
+        );
+        let body = lower_test_function_with_context(promise, None, None, Some(callee), &mut state);
+        assert_eq!(body.result, Some(RegisterValue::Object(1)));
+
+        let generator = test_function(
+            Vec::new(),
+            vec![
+                instruction("op_new_generator", &[("dst", OperandValue::Signed(-2))]),
+                instruction(
+                    "op_is_object",
+                    &[
+                        ("dst", OperandValue::Signed(-3)),
+                        ("operand", OperandValue::Signed(-2)),
+                    ],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-3))]),
+            ],
+        );
+        let body = lower_test_function_with_context(generator, None, None, None, &mut state);
+        assert_eq!(body.result, Some(RegisterValue::Boolean(true)));
+    }
+
+    #[test]
+    fn tier1_internal_array_species_uses_default_array_constructor() {
+        let length = FIRST_CONSTANT_REGISTER_INDEX;
+        let function = test_function(
+            vec![VisitorConstant {
+                value: VisitorConstantValue::Int32(3),
+                source_representation: ConstantSourceRepresentation::Integer,
+            }],
+            vec![
+                instruction(
+                    "op_new_array_with_size",
+                    &[
+                        ("dst", OperandValue::Signed(-2)),
+                        ("length", OperandValue::Signed(length)),
+                    ],
+                ),
+                instruction(
+                    "op_new_array_with_species",
+                    &[
+                        ("dst", OperandValue::Signed(-3)),
+                        ("length", OperandValue::Signed(length)),
+                        ("array", OperandValue::Signed(-2)),
+                    ],
+                ),
+                instruction(
+                    "op_get_length",
+                    &[
+                        ("dst", OperandValue::Signed(-4)),
+                        ("base", OperandValue::Signed(-3)),
+                    ],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-4))]),
+            ],
+        );
+        let (body, _) = lower_test_function(function, None);
+        assert_eq!(
+            body.result,
+            Some(RegisterValue::Scalar(ScalarExpression::Integer(3)))
+        );
+    }
+
+    #[test]
+    fn tier1_internal_object_conversion_and_accessor_flags_match_jsc() {
+        let text = FIRST_CONSTANT_REGISTER_INDEX;
+        let message = FIRST_CONSTANT_REGISTER_INDEX + 1;
+        let boxed = test_function(
+            vec![
+                VisitorConstant {
+                    value: VisitorConstantValue::String(SourceText::Latin1(
+                        b"hare".to_vec().into_boxed_slice(),
+                    )),
+                    source_representation: ConstantSourceRepresentation::Other,
+                },
+                VisitorConstant {
+                    value: VisitorConstantValue::String(SourceText::Latin1(
+                        b"Cannot convert value to object"
+                            .to_vec()
+                            .into_boxed_slice(),
+                    )),
+                    source_representation: ConstantSourceRepresentation::Other,
+                },
+            ],
+            vec![
+                instruction(
+                    "op_to_object",
+                    &[
+                        ("dst", OperandValue::Signed(-2)),
+                        ("operand", OperandValue::Signed(text)),
+                        ("message", OperandValue::Signed(message)),
+                    ],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-2))]),
+            ],
+        );
+        let (body, state) = lower_test_function(boxed, None);
+        let boxed = body.result.unwrap();
+        assert_eq!(
+            static_get_property(
+                &state.heap,
+                &boxed,
+                StaticPropertyKey::Name("length".into())
+            )
+            .unwrap(),
+            RegisterValue::Scalar(ScalarExpression::Integer(4))
+        );
+        assert_eq!(
+            static_get_property(&state.heap, &boxed, StaticPropertyKey::Index(0)).unwrap(),
+            RegisterValue::String("h".into())
+        );
+
+        let property = FIRST_CONSTANT_REGISTER_INDEX;
+        let undefined = FIRST_CONSTANT_REGISTER_INDEX + 1;
+        let attributes = FIRST_CONSTANT_REGISTER_INDEX + 2;
+        let accessor = test_function(
+            vec![
+                VisitorConstant {
+                    value: VisitorConstantValue::String(SourceText::Latin1(
+                        b"value".to_vec().into_boxed_slice(),
+                    )),
+                    source_representation: ConstantSourceRepresentation::Other,
+                },
+                VisitorConstant {
+                    value: VisitorConstantValue::Undefined,
+                    source_representation: ConstantSourceRepresentation::Other,
+                },
+                VisitorConstant {
+                    value: VisitorConstantValue::Int32((2 << 4) | (1 << 7)),
+                    source_representation: ConstantSourceRepresentation::Integer,
+                },
+            ],
+            vec![
+                instruction("op_new_object", &[("dst", OperandValue::Signed(-2))]),
+                instruction(
+                    "op_define_accessor_property",
+                    &[
+                        ("base", OperandValue::Signed(-2)),
+                        ("property", OperandValue::Signed(property)),
+                        ("getter", OperandValue::Signed(undefined)),
+                        ("setter", OperandValue::Signed(undefined)),
+                        ("attributes", OperandValue::Signed(attributes)),
+                    ],
+                ),
+                instruction(
+                    "op_has_structure_with_flags",
+                    &[
+                        ("dst", OperandValue::Signed(-3)),
+                        ("operand", OperandValue::Signed(-2)),
+                        ("flags", OperandValue::Unsigned(1 << 30)),
+                    ],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-3))]),
+            ],
+        );
+        let (body, state) = lower_test_function(accessor, None);
+        assert_eq!(body.result, Some(RegisterValue::Boolean(true)));
+        let Some(StaticHeapEntry::Object { properties, .. }) = state.heap.get(&0) else {
+            panic!("accessor base was not allocated as an object");
+        };
+        let property = properties.get("value").unwrap();
+        assert!(property.is_accessor);
+        assert!(!property.configurable);
+    }
+
+    #[test]
+    fn tier1_internal_property_key_and_identity_preserve_values() {
+        let value = FIRST_CONSTANT_REGISTER_INDEX;
+        let function = test_function(
+            vec![VisitorConstant {
+                value: VisitorConstantValue::Boolean(true),
+                source_representation: ConstantSourceRepresentation::Other,
+            }],
+            vec![
+                instruction(
+                    "op_to_property_key_or_number",
+                    &[
+                        ("dst", OperandValue::Signed(-2)),
+                        ("src", OperandValue::Signed(value)),
+                    ],
+                ),
+                instruction(
+                    "op_identity_with_profile",
+                    &[("srcDst", OperandValue::Signed(-2))],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-2))]),
+            ],
+        );
+        let (body, _) = lower_test_function(function, None);
+        assert_eq!(body.result, Some(RegisterValue::String("true".into())));
+    }
+
+    #[test]
+    fn tier1_internal_scope_operations_keep_var_and_callee_scope_identity() {
+        let root = Rc::new(RefCell::new(StaticEnvironment {
+            kind: StaticEnvironmentKind::Var,
+            parent: None,
+            object_scope: None,
+            bindings: BTreeMap::new(),
+            scoped_argument_values: BTreeMap::new(),
+            scoped_argument_names: BTreeMap::new(),
+        }));
+        let symbol_table = FIRST_CONSTANT_REGISTER_INDEX;
+        let undefined = FIRST_CONSTANT_REGISTER_INDEX + 1;
+        let value = FIRST_CONSTANT_REGISTER_INDEX + 2;
+        let constants = vec![
+            VisitorConstant {
+                value: VisitorConstantValue::UnimplementedCell("SymbolTable".into()),
+                source_representation: ConstantSourceRepresentation::Other,
+            },
+            VisitorConstant {
+                value: VisitorConstantValue::Undefined,
+                source_representation: ConstantSourceRepresentation::Other,
+            },
+            VisitorConstant {
+                value: VisitorConstantValue::Int32(42),
+                source_representation: ConstantSourceRepresentation::Integer,
+            },
+        ];
+        let mut with_scope = test_function(
+            constants.clone(),
+            vec![
+                instruction(
+                    "op_create_lexical_environment",
+                    &[
+                        ("dst", OperandValue::Signed(-2)),
+                        ("scope", OperandValue::Signed(-1)),
+                        ("symbolTable", OperandValue::Signed(symbol_table)),
+                        ("initialValue", OperandValue::Signed(undefined)),
+                    ],
+                ),
+                instruction("op_new_object", &[("dst", OperandValue::Signed(-3))]),
+                instruction(
+                    "op_put_by_id",
+                    &[
+                        ("base", OperandValue::Signed(-3)),
+                        ("property", OperandValue::Unsigned(0)),
+                        ("value", OperandValue::Signed(value)),
+                    ],
+                ),
+                instruction(
+                    "op_push_with_scope",
+                    &[
+                        ("dst", OperandValue::Signed(-4)),
+                        ("currentScope", OperandValue::Signed(-2)),
+                        ("newScope", OperandValue::Signed(-3)),
+                    ],
+                ),
+                instruction(
+                    "op_get_from_scope",
+                    &[
+                        ("dst", OperandValue::Signed(-5)),
+                        ("scope", OperandValue::Signed(-4)),
+                        ("var", OperandValue::Unsigned(0)),
+                    ],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-5))]),
+            ],
+        );
+        with_scope
+            .identifiers
+            .push(SourceText::Latin1(b"value".to_vec().into_boxed_slice()));
+        let mut state = StaticExecutionState::default();
+        let body = lower_test_function_with_context(
+            with_scope,
+            None,
+            Some(root.clone()),
+            None,
+            &mut state,
+        );
+        assert_eq!(
+            body.result,
+            Some(RegisterValue::Scalar(ScalarExpression::Integer(42)))
+        );
+
+        let mut hoist = test_function(
+            constants.clone(),
+            vec![
+                instruction(
+                    "op_create_lexical_environment",
+                    &[
+                        ("dst", OperandValue::Signed(-2)),
+                        ("scope", OperandValue::Signed(-1)),
+                        ("symbolTable", OperandValue::Signed(symbol_table)),
+                        ("initialValue", OperandValue::Signed(undefined)),
+                    ],
+                ),
+                instruction("op_new_object", &[("dst", OperandValue::Signed(-3))]),
+                instruction(
+                    "op_push_with_scope",
+                    &[
+                        ("dst", OperandValue::Signed(-4)),
+                        ("currentScope", OperandValue::Signed(-2)),
+                        ("newScope", OperandValue::Signed(-3)),
+                    ],
+                ),
+                instruction(
+                    "op_resolve_scope_for_hoisting_func_decl_in_eval",
+                    &[
+                        ("dst", OperandValue::Signed(-5)),
+                        ("scope", OperandValue::Signed(-4)),
+                        ("property", OperandValue::Unsigned(0)),
+                    ],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-5))]),
+            ],
+        );
+        hoist
+            .identifiers
+            .push(SourceText::Latin1(b"value".to_vec().into_boxed_slice()));
+        let body =
+            lower_test_function_with_context(hoist, None, Some(root.clone()), None, &mut state);
+        let Some(RegisterValue::Environment(resolved)) = body.result else {
+            panic!("eval hoist did not resolve a variable environment");
+        };
+        assert!(Rc::ptr_eq(&resolved, &root));
+
+        let generator_frame = test_function(
+            constants,
+            vec![
+                instruction(
+                    "op_create_generator_frame_environment",
+                    &[
+                        ("dst", OperandValue::Signed(-2)),
+                        ("scope", OperandValue::Signed(-1)),
+                        ("symbolTable", OperandValue::Signed(symbol_table)),
+                        ("initialValue", OperandValue::Signed(undefined)),
+                    ],
+                ),
+                instruction(
+                    "op_get_parent_scope",
+                    &[
+                        ("dst", OperandValue::Signed(-3)),
+                        ("scope", OperandValue::Signed(-2)),
+                    ],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-3))]),
+            ],
+        );
+        let body = lower_test_function_with_context(
+            generator_frame,
+            None,
+            Some(root.clone()),
+            None,
+            &mut state,
+        );
+        let Some(RegisterValue::Environment(parent)) = body.result else {
+            panic!("generator frame did not preserve its parent scope");
+        };
+        assert!(Rc::ptr_eq(&parent, &root));
+
+        let get_scope = test_function(
+            Vec::new(),
+            vec![
+                instruction("op_new_object", &[("dst", OperandValue::Signed(-2))]),
+                instruction(
+                    "op_push_with_scope",
+                    &[
+                        ("dst", OperandValue::Signed(-1)),
+                        ("currentScope", OperandValue::Signed(-1)),
+                        ("newScope", OperandValue::Signed(-2)),
+                    ],
+                ),
+                instruction("op_get_scope", &[("dst", OperandValue::Signed(-3))]),
+                instruction("op_ret", &[("value", OperandValue::Signed(-3))]),
+            ],
+        );
+        let body =
+            lower_test_function_with_context(get_scope, None, Some(root.clone()), None, &mut state);
+        let Some(RegisterValue::Environment(scope)) = body.result else {
+            panic!("get_scope did not return the callee scope");
+        };
+        assert!(Rc::ptr_eq(&scope, &root));
+    }
+
+    #[test]
+    fn tier1_internal_predicates_and_yield_preserve_values() {
+        let undefined = FIRST_CONSTANT_REGISTER_INDEX;
+        let function = test_function(
+            vec![VisitorConstant {
+                value: VisitorConstantValue::Undefined,
+                source_representation: ConstantSourceRepresentation::Other,
+            }],
+            vec![
+                instruction(
+                    "op_is_undefined_or_null",
+                    &[
+                        ("dst", OperandValue::Signed(-2)),
+                        ("operand", OperandValue::Signed(undefined)),
+                    ],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-2))]),
+            ],
+        );
+        let (body, _) = lower_test_function(function, None);
+        assert_eq!(body.result, Some(RegisterValue::Boolean(true)));
+
+        let callable = RegisterValue::Function {
+            call: FunctionId(0),
+            construct: None,
+            environment: None,
+            identity: 0,
+            heap_id: 0,
+        };
+        let function = test_function(
+            Vec::new(),
+            vec![
+                instruction(
+                    "op_identity_with_profile",
+                    &[("srcDst", OperandValue::Signed(3))],
+                ),
+                instruction(
+                    "op_is_callable",
+                    &[
+                        ("dst", OperandValue::Signed(-2)),
+                        ("operand", OperandValue::Signed(3)),
+                    ],
+                ),
+                instruction("op_ret", &[("value", OperandValue::Signed(-2))]),
+            ],
+        );
+        let mut state = StaticExecutionState::default();
+        let body =
+            lower_test_function_with_context(function, None, None, Some(callable), &mut state);
+        assert_eq!(body.result, Some(RegisterValue::Boolean(true)));
+
+        let value = FIRST_CONSTANT_REGISTER_INDEX;
+        let function = test_function(
+            vec![VisitorConstant {
+                value: VisitorConstantValue::Int32(42),
+                source_representation: ConstantSourceRepresentation::Integer,
+            }],
+            vec![instruction(
+                "op_yield",
+                &[
+                    ("yieldPoint", OperandValue::Unsigned(0)),
+                    ("argument", OperandValue::Signed(value)),
+                ],
+            )],
+        );
+        let (body, _) = lower_test_function(function, None);
+        assert_eq!(
+            body.result,
+            Some(RegisterValue::Scalar(ScalarExpression::Integer(42)))
+        );
     }
 }

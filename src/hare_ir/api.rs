@@ -171,6 +171,10 @@ pub enum VisitorConstantValue {
     Int32(i32),
     Float64Bits(u64),
     String(SourceText),
+    BigInt {
+        negative: bool,
+        magnitude_be: Box<[u8]>,
+    },
     RegExp {
         pattern: SourceText,
         flags: u32,

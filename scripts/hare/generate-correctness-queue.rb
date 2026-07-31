@@ -22,6 +22,7 @@ end.select do |row|
 end
 by_name = rows.to_h { |row| [row.fetch("opcode"), row] }
 cases = JSON.parse(CASES.read)
+rust_semantics = ROOT.join("src/hare_llvm/bytecode_application.rs").read
 
 case_ids = {}
 claims = Hash.new { |hash, key| hash[key] = [] }
@@ -30,16 +31,21 @@ cases.each do |test_case|
   id = test_case.fetch("id")
   abort "duplicate Hare correctness case #{id}" if case_ids.key?(id)
   case_ids[id] = true
-  abort "empty Hare correctness source for #{id}" if test_case.fetch("source").strip.empty?
-  abort "invalid lowering route for #{id}" unless %w[imported source-transition].include?(test_case.fetch("lowering"))
+  lowering = test_case.fetch("lowering")
+  abort "invalid lowering route for #{id}" unless %w[imported source-transition rust-unit].include?(lowering)
+  verification = test_case.fetch("verification")
+  expected_verification = lowering == "rust-unit" ? "rust-unit" : "native-differential"
+  abort "invalid verification route for #{id}" unless verification == expected_verification
+  if lowering == "rust-unit"
+    rust_test = test_case.fetch("rust_test")
+    abort "missing Rust semantic witness #{rust_test} for #{id}" unless rust_semantics.match?(/\bfn #{Regexp.escape(rust_test)}\s*\(/)
+  else
+    abort "empty Hare correctness source for #{id}" if test_case.fetch("source").strip.empty?
+  end
 
   test_case.fetch("opcodes").each do |opcode|
     by_name[opcode] or abort "#{id} claims unknown or cache-only opcode #{opcode}"
     claims[opcode] << id
-  end
-  test_case.fetch("verified_opcodes", []).each do |opcode|
-    by_name[opcode] or abort "#{id} verifies unknown or cache-only opcode #{opcode}"
-    abort "#{id} verifies #{opcode} without exercising it" unless test_case.fetch("opcodes").include?(opcode)
     verified_claims[opcode] << id
   end
 end
