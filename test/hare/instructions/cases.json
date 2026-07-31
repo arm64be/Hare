@@ -424,6 +424,27 @@
     "source": "console.log((function (value) { const object = { first: value }; object.second = 2; return object.first + object.second; })(40)); console.log((function (value) { const object = { x: value }; return \"x\" in object; })(1)); console.log((function (value) { const object = { x: value }; return delete object.x; })(1));"
   },
   {
+    "id": "object.cross-call-mutation",
+    "family": "object_property",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_new_func",
+      "op_new_object",
+      "op_put_by_id",
+      "op_get_by_id",
+      "op_call",
+      "op_stricteq",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_call_ignore_result",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "function h026MutateObject(object) { object.value = 42; return object; } const h026SharedObject = { value: 0 }; console.log(h026MutateObject(h026SharedObject) === h026SharedObject); console.log(h026SharedObject.value);"
+  },
+  {
     "id": "object.static-array-elements",
     "family": "object_property",
     "lowering": "imported",

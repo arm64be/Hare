@@ -145,6 +145,8 @@ test.skipIf(!isLinux)(
       42
       true
       true
+      true
+      42
       40
       true
       true

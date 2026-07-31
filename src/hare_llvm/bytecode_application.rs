@@ -145,6 +145,33 @@ enum StaticHeapEntry {
     },
 }
 
+#[derive(Default)]
+struct StaticExecutionState {
+    heap: BTreeMap<u32, StaticHeapEntry>,
+    next_heap_id: u32,
+    next_function_identity: u32,
+}
+
+impl StaticExecutionState {
+    fn allocate_heap_id(&mut self) -> Result<u32, LlvmError> {
+        let id = self.next_heap_id;
+        self.next_heap_id = self
+            .next_heap_id
+            .checked_add(1)
+            .ok_or_else(|| imported_error("static heap id overflow"))?;
+        Ok(id)
+    }
+
+    fn allocate_function_identity(&mut self) -> Result<u32, LlvmError> {
+        let identity = self.next_function_identity;
+        self.next_function_identity = self
+            .next_function_identity
+            .checked_add(1)
+            .ok_or_else(|| imported_error("static function identity overflow"))?;
+        Ok(identity)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum StaticPropertyKey {
     Index(u32),
@@ -190,8 +217,17 @@ pub fn compile_imported_scalar_application(
 
     let mut functions = BTreeMap::new();
     for function in unit.functions.iter().skip(1) {
-        let Ok(body) = lower_function(unit, function, &functions, &call_arities, None, None, 0)
-        else {
+        let mut state = StaticExecutionState::default();
+        let Ok(body) = lower_function(
+            unit,
+            function,
+            &functions,
+            &call_arities,
+            None,
+            None,
+            &mut state,
+            0,
+        ) else {
             continue;
         };
         if !body.writes.is_empty() {
@@ -220,7 +256,17 @@ pub fn compile_imported_scalar_application(
         );
     }
 
-    let root_body = lower_function(unit, root, &functions, &call_arities, None, None, 0)?;
+    let mut state = StaticExecutionState::default();
+    let root_body = lower_function(
+        unit,
+        root,
+        &functions,
+        &call_arities,
+        None,
+        None,
+        &mut state,
+        0,
+    )?;
     if root_body.writes.is_empty() {
         return Err(imported_error(
             "root function performs no admitted native output",
@@ -309,6 +355,7 @@ fn lower_function(
     call_arities: &BTreeMap<FunctionId, usize>,
     explicit_arguments: Option<&[RegisterValue]>,
     explicit_environment: Option<StaticEnvironmentRef>,
+    state: &mut StaticExecutionState,
     call_depth: usize,
 ) -> Result<LoweredBody, LlvmError> {
     if call_depth > 64 {
@@ -356,9 +403,6 @@ fn lower_function(
 
     let mut writes = Vec::new();
     let mut result = None;
-    let mut heap = BTreeMap::new();
-    let mut next_heap_id = 0_u32;
-    let mut next_function_identity = 0_u32;
     let mut pending_exception = None;
     let instruction_indices = function
         .instructions
@@ -557,11 +601,8 @@ fn lower_function(
             }
             "op_new_object" => {
                 let destination = signed_operand(instruction, "dst")?;
-                let id = next_heap_id;
-                next_heap_id = next_heap_id
-                    .checked_add(1)
-                    .ok_or_else(|| imported_error("static heap id overflow"))?;
-                heap.insert(
+                let id = state.allocate_heap_id()?;
+                state.heap.insert(
                     id,
                     StaticHeapEntry::Object {
                         properties: BTreeMap::new(),
@@ -577,10 +618,7 @@ fn lower_function(
                 let RegisterValue::RegExpTemplate { pattern, flags } = template else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 };
-                let identity = next_heap_id;
-                next_heap_id = next_heap_id
-                    .checked_add(1)
-                    .ok_or_else(|| imported_error("static heap id overflow"))?;
+                let identity = state.allocate_heap_id()?;
                 registers.insert(
                     destination,
                     RegisterValue::RegExp {
@@ -665,11 +703,8 @@ fn lower_function(
                             .map_err(|_| imported_error("immutable array index exceeds u32"))
                     })
                     .collect::<Result<BTreeMap<_, _>, _>>()?;
-                let id = next_heap_id;
-                next_heap_id = next_heap_id
-                    .checked_add(1)
-                    .ok_or_else(|| imported_error("static heap id overflow"))?;
-                heap.insert(
+                let id = state.allocate_heap_id()?;
+                state.heap.insert(
                     id,
                     StaticHeapEntry::Array {
                         elements,
@@ -696,11 +731,8 @@ fn lower_function(
                 }
                 let length = u32::try_from(count)
                     .map_err(|_| imported_error("array literal length exceeds u32"))?;
-                let id = next_heap_id;
-                next_heap_id = next_heap_id
-                    .checked_add(1)
-                    .ok_or_else(|| imported_error("static heap id overflow"))?;
-                heap.insert(
+                let id = state.allocate_heap_id()?;
+                state.heap.insert(
                     id,
                     StaticHeapEntry::Array {
                         elements,
@@ -720,11 +752,8 @@ fn lower_function(
                 }
                 let length = u32::try_from(evaluate(&length, functions, &[], 0)?)
                     .map_err(|_| unsupported(function, instruction, descriptor.opcode))?;
-                let id = next_heap_id;
-                next_heap_id = next_heap_id
-                    .checked_add(1)
-                    .ok_or_else(|| imported_error("static heap id overflow"))?;
-                heap.insert(
+                let id = state.allocate_heap_id()?;
+                state.heap.insert(
                     id,
                     StaticHeapEntry::Array {
                         elements: BTreeMap::new(),
@@ -751,11 +780,8 @@ fn lower_function(
                     .enumerate()
                     .map(|(index, value)| (index as u32, value))
                     .collect();
-                let id = next_heap_id;
-                next_heap_id = next_heap_id
-                    .checked_add(1)
-                    .ok_or_else(|| imported_error("static heap id overflow"))?;
-                heap.insert(
+                let id = state.allocate_heap_id()?;
+                state.heap.insert(
                     id,
                     StaticHeapEntry::Array {
                         elements,
@@ -778,7 +804,7 @@ fn lower_function(
                 };
                 let Some(StaticHeapEntry::Array {
                     elements, length, ..
-                }) = heap.get(&id)
+                }) = state.heap.get(&id)
                 else {
                     return Err(imported_error("spread references a missing static array"));
                 };
@@ -815,11 +841,8 @@ fn lower_function(
                     .enumerate()
                     .map(|(index, value)| (index as u32, value))
                     .collect();
-                let id = next_heap_id;
-                next_heap_id = next_heap_id
-                    .checked_add(1)
-                    .ok_or_else(|| imported_error("static heap id overflow"))?;
-                heap.insert(
+                let id = state.allocate_heap_id()?;
+                state.heap.insert(
                     id,
                     StaticHeapEntry::Array {
                         elements,
@@ -837,7 +860,12 @@ fn lower_function(
                     read_register(function, &registers, signed_operand(instruction, "value")?)?;
                 let property =
                     identifier_string(function, unsigned_operand(instruction, "property")?)?;
-                static_put_property(&mut heap, &base, StaticPropertyKey::Name(property), value)?;
+                static_put_property(
+                    &mut state.heap,
+                    &base,
+                    StaticPropertyKey::Name(property),
+                    value,
+                )?;
             }
             "op_new_func" | "op_new_func_exp" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -852,17 +880,15 @@ fn lower_function(
                     RegisterValue::Opaque => None,
                     _ => return Err(unsupported(function, instruction, descriptor.opcode)),
                 };
+                let identity = state.allocate_function_identity()?;
                 registers.insert(
                     destination,
                     RegisterValue::Function {
                         id: child,
                         environment,
-                        identity: next_function_identity,
+                        identity,
                     },
                 );
-                next_function_identity = next_function_identity
-                    .checked_add(1)
-                    .ok_or_else(|| imported_error("static function identity overflow"))?;
             }
             "op_create_lexical_environment" | "op_create_generator_frame_environment" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -994,7 +1020,7 @@ fn lower_function(
                 } else if let Some(base) = registers.get(&base) {
                     let property = identifier_string(function, property)?;
                     let value =
-                        static_get_property(&heap, base, StaticPropertyKey::Name(property))?;
+                        static_get_property(&state.heap, base, StaticPropertyKey::Name(property))?;
                     registers.insert(destination, value);
                 } else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
@@ -1005,7 +1031,7 @@ fn lower_function(
                 let base =
                     read_register(function, &registers, signed_operand(instruction, "base")?)?;
                 let length = match base {
-                    RegisterValue::Array(id) => match heap.get(&id) {
+                    RegisterValue::Array(id) => match state.heap.get(&id) {
                         Some(StaticHeapEntry::Array { length, .. }) => i64::from(*length),
                         _ => {
                             return Err(imported_error(
@@ -1028,7 +1054,7 @@ fn lower_function(
                 let destination = signed_operand(instruction, "dst")?;
                 let base =
                     read_register(function, &registers, signed_operand(instruction, "base")?)?;
-                let (heap_id, keys) = static_enumerable_keys(&heap, &base)?;
+                let (heap_id, keys) = static_enumerable_keys(&state.heap, &base)?;
                 let enumerator = if keys.is_empty() {
                     RegisterValue::Builtin(Builtin::EmptyPropertyNameEnumerator)
                 } else {
@@ -1095,8 +1121,11 @@ fn lower_function(
                 let RegisterValue::String(property_name) = property_name else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 };
-                let value =
-                    static_get_property(&heap, &base, StaticPropertyKey::Name(property_name))?;
+                let value = static_get_property(
+                    &state.heap,
+                    &base,
+                    StaticPropertyKey::Name(property_name),
+                )?;
                 registers.insert(destination, value);
             }
             "op_get_by_val" => {
@@ -1109,7 +1138,7 @@ fn lower_function(
                     signed_operand(instruction, "property")?,
                 )?;
                 let property = static_property_key(&property, functions)?;
-                let value = static_get_property(&heap, &base, property)?;
+                let value = static_get_property(&state.heap, &base, property)?;
                 registers.insert(destination, value);
             }
             "op_put_by_val" | "op_put_by_val_direct" => {
@@ -1123,7 +1152,7 @@ fn lower_function(
                 let property = static_property_key(&property, functions)?;
                 let value =
                     read_register(function, &registers, signed_operand(instruction, "value")?)?;
-                static_put_property(&mut heap, &base, property, value)?;
+                static_put_property(&mut state.heap, &base, property, value)?;
             }
             "op_in_by_id" | "op_in_by_val" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -1142,7 +1171,7 @@ fn lower_function(
                     )?;
                     static_property_key(&property, functions)?
                 };
-                let present = static_has_property(&heap, &base, property)?;
+                let present = static_has_property(&state.heap, &base, property)?;
                 registers.insert(destination, RegisterValue::Boolean(present));
             }
             "op_del_by_id" | "op_del_by_val" => {
@@ -1162,7 +1191,7 @@ fn lower_function(
                     )?;
                     static_property_key(&property, functions)?
                 };
-                static_delete_property(&mut heap, &base, property)?;
+                static_delete_property(&mut state.heap, &base, property)?;
                 registers.insert(destination, RegisterValue::Boolean(true));
             }
             "op_add" | "op_sub" | "op_mul" | "op_div" | "op_mod" | "op_pow" | "op_bitand"
@@ -1191,20 +1220,41 @@ fn lower_function(
                 };
                 registers.insert(destination, RegisterValue::Scalar(expression));
             }
-            "op_eq" | "op_neq" | "op_stricteq" | "op_nstricteq" | "op_less" | "op_lesseq"
-            | "op_greater" | "op_greatereq" | "op_below" | "op_beloweq" => {
+            "op_eq" | "op_neq" | "op_stricteq" | "op_nstricteq" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let left =
+                    read_register(function, &registers, signed_operand(instruction, "lhs")?)?;
+                let right =
+                    read_register(function, &registers, signed_operand(instruction, "rhs")?)?;
+                let known = known_strict_equality(&left, &right, functions)?;
+                if let Some(equal) = known {
+                    let equal = if matches!(descriptor.opcode, "op_neq" | "op_nstricteq") {
+                        !equal
+                    } else {
+                        equal
+                    };
+                    registers.insert(destination, RegisterValue::Boolean(equal));
+                    instruction_index += 1;
+                    continue;
+                }
+                let (RegisterValue::Scalar(left), RegisterValue::Scalar(right)) = (left, right)
+                else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let expression = if matches!(descriptor.opcode, "op_eq" | "op_stricteq") {
+                    ScalarExpression::Equal(Box::new(left), Box::new(right))
+                } else {
+                    ScalarExpression::NotEqual(Box::new(left), Box::new(right))
+                };
+                registers.insert(destination, RegisterValue::BooleanScalar(expression));
+            }
+            "op_less" | "op_lesseq" | "op_greater" | "op_greatereq" | "op_below" | "op_beloweq" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let left =
                     scalar_register(function, &registers, signed_operand(instruction, "lhs")?)?;
                 let right =
                     scalar_register(function, &registers, signed_operand(instruction, "rhs")?)?;
                 let expression = match descriptor.opcode {
-                    "op_eq" | "op_stricteq" => {
-                        ScalarExpression::Equal(Box::new(left), Box::new(right))
-                    }
-                    "op_neq" | "op_nstricteq" => {
-                        ScalarExpression::NotEqual(Box::new(left), Box::new(right))
-                    }
                     "op_less" => ScalarExpression::Less(Box::new(left), Box::new(right)),
                     "op_lesseq" => ScalarExpression::LessEqual(Box::new(left), Box::new(right)),
                     "op_greater" => ScalarExpression::Greater(Box::new(left), Box::new(right)),
@@ -1488,6 +1538,7 @@ fn lower_function(
                         call_arities,
                         Some(&arguments),
                         environment,
+                        state,
                         call_depth + 1,
                     )?;
                     if !body.writes.is_empty() {
@@ -1754,7 +1805,11 @@ fn known_strict_equality(
         {
             Some(evaluate(left, functions, &[], 0)? == evaluate(right, functions, &[], 0)?)
         }
-        (left, right) if known_js_type(left).is_some() && known_js_type(right).is_some() => {
+        (left, right)
+            if known_js_type(left)
+                .zip(known_js_type(right))
+                .is_some_and(|(left, right)| left != right) =>
+        {
             Some(false)
         }
         _ => None,
