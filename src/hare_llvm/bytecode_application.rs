@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::rc::Rc;
 
 use hare_ir::{
     FIRST_CONSTANT_REGISTER_INDEX, FunctionId, FunctionRelation, OperandValue, OwnedVisitorUnit,
@@ -66,25 +68,45 @@ struct ScalarFunction {
     result: ScalarExpression,
 }
 
+type StaticEnvironmentRef = Rc<RefCell<StaticEnvironment>>;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StaticEnvironment {
+    parent: Option<StaticEnvironmentRef>,
+    bindings: BTreeMap<Box<str>, RegisterValue>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum RegisterValue {
     Scalar(ScalarExpression),
     String(Box<str>),
     Concatenation(Vec<Self>),
     BooleanScalar(ScalarExpression),
-    Function(FunctionId),
+    Function {
+        id: FunctionId,
+        environment: Option<StaticEnvironmentRef>,
+        identity: u32,
+    },
+    Environment(StaticEnvironmentRef),
     ConsoleScope,
     NaNScope,
     InfinityScope,
+    UndefinedScope,
     ConsoleObject,
     ConsoleLog,
     ConsoleNoArgument,
     BuiltinScope(Builtin),
     Builtin(Builtin),
-    Enumerator { heap_id: u32, keys: Vec<Box<str>> },
+    Enumerator {
+        heap_id: u32,
+        keys: Vec<Box<str>>,
+    },
     Arguments(Vec<Self>),
     ExceptionObject(Box<Self>),
-    Error { kind: u32, message: Box<str> },
+    Error {
+        kind: u32,
+        message: Box<str>,
+    },
     Object(u32),
     Array(u32),
     Spread(Vec<Self>),
@@ -121,7 +143,7 @@ enum StaticPropertyKey {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LoweredBody {
-    result: Option<(ScalarKind, ScalarExpression)>,
+    result: Option<RegisterValue>,
     writes: Vec<RegisterValue>,
 }
 
@@ -158,16 +180,25 @@ pub fn compile_imported_scalar_application(
 
     let mut functions = BTreeMap::new();
     for function in unit.functions.iter().skip(1) {
-        let body = lower_function(unit, function, &functions, &call_arities)?;
+        let Ok(body) = lower_function(unit, function, &functions, &call_arities, None, None, 0)
+        else {
+            continue;
+        };
         if !body.writes.is_empty() {
-            return Err(imported_error(format!(
-                "f{} performs output inside a callable function",
-                function.id.0
-            )));
+            continue;
         }
-        let (result_kind, result) = body.result.ok_or_else(|| {
-            imported_error(format!("f{} has no scalar return value", function.id.0))
-        })?;
+        let Some(result) = body.result else {
+            continue;
+        };
+        let (result_kind, result) = match result {
+            RegisterValue::Scalar(result) => (ScalarKind::Integer, result),
+            RegisterValue::BooleanScalar(result) => (ScalarKind::Boolean, result),
+            RegisterValue::Boolean(result) => (
+                ScalarKind::Boolean,
+                ScalarExpression::Integer(i64::from(result)),
+            ),
+            _ => continue,
+        };
         functions.insert(
             function.id,
             ScalarFunction {
@@ -179,7 +210,7 @@ pub fn compile_imported_scalar_application(
         );
     }
 
-    let root_body = lower_function(unit, root, &functions, &call_arities)?;
+    let root_body = lower_function(unit, root, &functions, &call_arities, None, None, 0)?;
     if root_body.writes.is_empty() {
         return Err(imported_error(
             "root function performs no admitted native output",
@@ -266,29 +297,58 @@ fn lower_function(
     function: &VisitorFunction,
     functions: &BTreeMap<FunctionId, ScalarFunction>,
     call_arities: &BTreeMap<FunctionId, usize>,
+    explicit_arguments: Option<&[RegisterValue]>,
+    explicit_environment: Option<StaticEnvironmentRef>,
+    call_depth: usize,
 ) -> Result<LoweredBody, LlvmError> {
+    if call_depth > 64 {
+        return Err(imported_error("static call depth exceeds 64"));
+    }
     let mut registers = BTreeMap::new();
-    registers.insert(function.scope_register as i64, RegisterValue::Opaque);
+    registers.insert(
+        function.scope_register as i64,
+        explicit_environment
+            .map(RegisterValue::Environment)
+            .unwrap_or(RegisterValue::Opaque),
+    );
     registers.insert(function.this_register as i64, RegisterValue::Opaque);
     registers.insert(
         function.call_frame_this_argument_register as i64,
         RegisterValue::Undefined,
     );
-    let parameter_count = static_parameter_count(function, call_arities);
+    let parameter_count = explicit_arguments.map_or_else(
+        || static_parameter_count(function, call_arities),
+        |arguments| {
+            usize::try_from(function.num_parameters.saturating_sub(1))
+                .unwrap_or(usize::MAX)
+                .max(arguments.len())
+        },
+    );
+    let parameter_values = (0..parameter_count)
+        .map(|index| {
+            explicit_arguments
+                .and_then(|arguments| arguments.get(index).cloned())
+                .unwrap_or_else(|| {
+                    if explicit_arguments.is_some() {
+                        RegisterValue::Undefined
+                    } else {
+                        RegisterValue::Scalar(ScalarExpression::Parameter(index))
+                    }
+                })
+        })
+        .collect::<Vec<_>>();
     for index in 0..parameter_count {
         registers.insert(
             i64::from(function.call_frame_first_argument_register) + index as i64,
-            RegisterValue::Scalar(ScalarExpression::Parameter(index)),
+            parameter_values[index].clone(),
         );
     }
-    let parameter_values = (0..parameter_count)
-        .map(|index| RegisterValue::Scalar(ScalarExpression::Parameter(index)))
-        .collect::<Vec<_>>();
 
     let mut writes = Vec::new();
     let mut result = None;
     let mut heap = BTreeMap::new();
     let mut next_heap_id = 0_u32;
+    let mut next_function_identity = 0_u32;
     let mut pending_exception = None;
     let instruction_indices = function
         .instructions
@@ -717,17 +777,107 @@ fn lower_function(
                 let destination = signed_operand(instruction, "dst")?;
                 let index = unsigned_operand(instruction, "functionDecl")?;
                 let child = child_function(unit, function.id, descriptor.opcode, index)?;
-                registers.insert(destination, RegisterValue::Function(child));
+                let environment = match read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "scope")?,
+                )? {
+                    RegisterValue::Environment(environment) => Some(environment),
+                    RegisterValue::Opaque => None,
+                    _ => return Err(unsupported(function, instruction, descriptor.opcode)),
+                };
+                registers.insert(
+                    destination,
+                    RegisterValue::Function {
+                        id: child,
+                        environment,
+                        identity: next_function_identity,
+                    },
+                );
+                next_function_identity = next_function_identity
+                    .checked_add(1)
+                    .ok_or_else(|| imported_error("static function identity overflow"))?;
+            }
+            "op_create_lexical_environment" | "op_create_generator_frame_environment" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let parent = match read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "scope")?,
+                )? {
+                    RegisterValue::Environment(environment) => Some(environment),
+                    RegisterValue::Opaque => None,
+                    _ => return Err(unsupported(function, instruction, descriptor.opcode)),
+                };
+                let _symbol_table = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "symbolTable")?,
+                )?;
+                let _initial_value = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "initialValue")?,
+                )?;
+                registers.insert(
+                    destination,
+                    RegisterValue::Environment(Rc::new(RefCell::new(StaticEnvironment {
+                        parent,
+                        bindings: BTreeMap::new(),
+                    }))),
+                );
+            }
+            "op_put_to_scope" => {
+                let scope =
+                    read_register(function, &registers, signed_operand(instruction, "scope")?)?;
+                let RegisterValue::Environment(environment) = scope else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let identifier =
+                    identifier_string(function, unsigned_operand(instruction, "var")?)?;
+                let value =
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                environment.borrow_mut().bindings.insert(identifier, value);
+            }
+            "op_get_scope" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let scope =
+                    read_register(function, &registers, i64::from(function.scope_register))?;
+                registers.insert(destination, scope);
+            }
+            "op_get_parent_scope" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let scope =
+                    read_register(function, &registers, signed_operand(instruction, "scope")?)?;
+                let RegisterValue::Environment(environment) = scope else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let parent = environment.borrow().parent.clone();
+                registers.insert(
+                    destination,
+                    parent
+                        .map(RegisterValue::Environment)
+                        .unwrap_or(RegisterValue::Opaque),
+                );
             }
             "op_resolve_scope" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let identifier = unsigned_operand(instruction, "var")?;
-                if identifier_is(function, identifier, b"console")? {
+                let scope =
+                    read_register(function, &registers, signed_operand(instruction, "scope")?)?;
+                let identifier_text = identifier_string(function, identifier)?;
+                if let RegisterValue::Environment(environment) = &scope
+                    && let Some(resolved) = resolve_environment(environment, &identifier_text)
+                {
+                    registers.insert(destination, RegisterValue::Environment(resolved));
+                } else if identifier_is(function, identifier, b"console")? {
                     registers.insert(destination, RegisterValue::ConsoleScope);
                 } else if identifier_is(function, identifier, b"NaN")? {
                     registers.insert(destination, RegisterValue::NaNScope);
                 } else if identifier_is(function, identifier, b"Infinity")? {
                     registers.insert(destination, RegisterValue::InfinityScope);
+                } else if identifier_is(function, identifier, b"undefined")? {
+                    registers.insert(destination, RegisterValue::UndefinedScope);
                 } else if let Some(builtin) = builtin_identifier(function, identifier)? {
                     registers.insert(destination, RegisterValue::BuiltinScope(builtin));
                 } else {
@@ -738,7 +888,12 @@ fn lower_function(
                 let destination = signed_operand(instruction, "dst")?;
                 let scope = signed_operand(instruction, "scope")?;
                 let identifier = unsigned_operand(instruction, "var")?;
-                if matches!(registers.get(&scope), Some(RegisterValue::ConsoleScope))
+                if let Some(RegisterValue::Environment(environment)) = registers.get(&scope)
+                    && let Some(value) =
+                        environment_binding(environment, &identifier_string(function, identifier)?)
+                {
+                    registers.insert(destination, value);
+                } else if matches!(registers.get(&scope), Some(RegisterValue::ConsoleScope))
                     && identifier_is(function, identifier, b"console")?
                 {
                     registers.insert(destination, RegisterValue::ConsoleObject);
@@ -750,6 +905,10 @@ fn lower_function(
                     && identifier_is(function, identifier, b"Infinity")?
                 {
                     registers.insert(destination, RegisterValue::PositiveInfinity);
+                } else if matches!(registers.get(&scope), Some(RegisterValue::UndefinedScope))
+                    && identifier_is(function, identifier, b"undefined")?
+                {
+                    registers.insert(destination, RegisterValue::Undefined);
                 } else if let Some(RegisterValue::BuiltinScope(expected)) = registers.get(&scope)
                     && builtin_identifier(function, identifier)? == Some(*expected)
                 {
@@ -1216,30 +1375,65 @@ fn lower_function(
                 }
                 registers.insert(destination, RegisterValue::Concatenation(values));
             }
-            "op_call" => {
+            "op_call" | "op_tail_call" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let callee_register = signed_operand(instruction, "callee")?;
-                let RegisterValue::Function(callee) =
-                    read_register(function, &registers, callee_register)?
+                let RegisterValue::Function {
+                    id: callee,
+                    environment,
+                    ..
+                } = read_register(function, &registers, callee_register)?
                 else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 };
-                let arguments = scalar_call_arguments(function, instruction, &registers)?;
-                let callee_function = functions.get(&callee).ok_or_else(|| {
-                    imported_error(format!(
-                        "f{} calls f{} before its scalar result is available",
-                        function.id.0, callee.0
-                    ))
-                })?;
-                let expression = ScalarExpression::Call {
-                    function: callee,
-                    arguments,
+                let arguments = call_register_values(function, instruction, &registers)?;
+                let scalar_arguments = arguments
+                    .iter()
+                    .map(|value| match value {
+                        RegisterValue::Scalar(expression) => Some(expression.clone()),
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>();
+                let value = if environment.is_none()
+                    && let Some(callee_function) = functions.get(&callee)
+                    && let Some(arguments) = scalar_arguments
+                    && arguments.len() == callee_function.parameter_count
+                {
+                    let expression = ScalarExpression::Call {
+                        function: callee,
+                        arguments,
+                    };
+                    match callee_function.result_kind {
+                        ScalarKind::Integer => RegisterValue::Scalar(expression),
+                        ScalarKind::Boolean => RegisterValue::BooleanScalar(expression),
+                    }
+                } else {
+                    let callee_definition =
+                        unit.functions.get(callee.index()).ok_or_else(|| {
+                            imported_error(format!(
+                                "f{} calls missing f{}",
+                                function.id.0, callee.0
+                            ))
+                        })?;
+                    let body = lower_function(
+                        unit,
+                        callee_definition,
+                        functions,
+                        call_arities,
+                        Some(&arguments),
+                        environment,
+                        call_depth + 1,
+                    )?;
+                    if !body.writes.is_empty() {
+                        return Err(unsupported(function, instruction, descriptor.opcode));
+                    }
+                    body.result.unwrap_or(RegisterValue::Undefined)
                 };
-                let value = match callee_function.result_kind {
-                    ScalarKind::Integer => RegisterValue::Scalar(expression),
-                    ScalarKind::Boolean => RegisterValue::BooleanScalar(expression),
-                };
-                registers.insert(destination, value);
+                registers.insert(destination, value.clone());
+                if descriptor.opcode == "op_tail_call" {
+                    result = Some(value);
+                    break;
+                }
             }
             "op_call_ignore_result" => {
                 let callee = signed_operand(instruction, "callee")?;
@@ -1259,33 +1453,7 @@ fn lower_function(
             }
             "op_ret" => {
                 let value = signed_operand(instruction, "value")?;
-                match read_register(function, &registers, value)? {
-                    RegisterValue::Scalar(expression) => {
-                        result = Some((ScalarKind::Integer, expression));
-                    }
-                    RegisterValue::BooleanScalar(expression) => {
-                        result = Some((ScalarKind::Boolean, expression));
-                    }
-                    RegisterValue::Boolean(value) if function.id.0 != 0 => {
-                        result = Some((
-                            ScalarKind::Boolean,
-                            ScalarExpression::Integer(i64::from(value)),
-                        ));
-                    }
-                    RegisterValue::Empty
-                    | RegisterValue::Undefined
-                    | RegisterValue::Null
-                    | RegisterValue::Boolean(_)
-                    | RegisterValue::String(_)
-                    | RegisterValue::Concatenation(_)
-                    | RegisterValue::NaN
-                    | RegisterValue::NegativeZero
-                    | RegisterValue::PositiveInfinity
-                    | RegisterValue::NegativeInfinity
-                    | RegisterValue::Opaque
-                        if function.id.0 == 0 => {}
-                    _ => return Err(unsupported(function, instruction, descriptor.opcode)),
-                }
+                result = Some(read_register(function, &registers, value)?);
                 break;
             }
             _ => return Err(unsupported(function, instruction, descriptor.opcode)),
@@ -1396,7 +1564,7 @@ fn known_truthiness(
         RegisterValue::String(value) => Some(!value.is_empty()),
         RegisterValue::PositiveInfinity
         | RegisterValue::NegativeInfinity
-        | RegisterValue::Function(_)
+        | RegisterValue::Function { .. }
         | RegisterValue::Object(_)
         | RegisterValue::Array(_)
         | RegisterValue::ConsoleObject
@@ -1450,6 +1618,15 @@ fn known_branch_comparison(
     right: &RegisterValue,
     functions: &BTreeMap<FunctionId, ScalarFunction>,
 ) -> Result<Option<bool>, LlvmError> {
+    if matches!(opcode, "op_jstricteq" | "op_jnstricteq")
+        && let Some(equal) = known_strict_equality(left, right, functions)?
+    {
+        return Ok(Some(if opcode == "op_jstricteq" {
+            equal
+        } else {
+            !equal
+        }));
+    }
     let (RegisterValue::Scalar(left), RegisterValue::Scalar(right)) = (left, right) else {
         return Ok(None);
     };
@@ -1474,6 +1651,66 @@ fn known_branch_comparison(
         _ => return Ok(None),
     };
     Ok(Some(result))
+}
+
+fn known_strict_equality(
+    left: &RegisterValue,
+    right: &RegisterValue,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
+) -> Result<Option<bool>, LlvmError> {
+    let result = match (left, right) {
+        (RegisterValue::Undefined, RegisterValue::Undefined)
+        | (RegisterValue::Null, RegisterValue::Null)
+        | (RegisterValue::NegativeZero, RegisterValue::NegativeZero)
+        | (RegisterValue::PositiveInfinity, RegisterValue::PositiveInfinity)
+        | (RegisterValue::NegativeInfinity, RegisterValue::NegativeInfinity) => Some(true),
+        (RegisterValue::NaN, _) | (_, RegisterValue::NaN) => Some(false),
+        (RegisterValue::Boolean(left), RegisterValue::Boolean(right)) => Some(left == right),
+        (RegisterValue::String(left), RegisterValue::String(right)) => Some(left == right),
+        (
+            RegisterValue::Function { identity: left, .. },
+            RegisterValue::Function {
+                identity: right, ..
+            },
+        ) => Some(left == right),
+        (RegisterValue::Object(left), RegisterValue::Object(right))
+        | (RegisterValue::Array(left), RegisterValue::Array(right)) => Some(left == right),
+        (RegisterValue::Builtin(left), RegisterValue::Builtin(right)) => Some(left == right),
+        (RegisterValue::Scalar(left), RegisterValue::Scalar(right))
+            if expression_is_closed(left) && expression_is_closed(right) =>
+        {
+            Some(evaluate(left, functions, &[], 0)? == evaluate(right, functions, &[], 0)?)
+        }
+        (left, right) if known_js_type(left).is_some() && known_js_type(right).is_some() => {
+            Some(false)
+        }
+        _ => None,
+    };
+    Ok(result)
+}
+
+fn known_js_type(value: &RegisterValue) -> Option<&'static str> {
+    match value {
+        RegisterValue::Undefined => Some("undefined"),
+        RegisterValue::Null => Some("null"),
+        RegisterValue::Boolean(_) | RegisterValue::BooleanScalar(_) => Some("boolean"),
+        RegisterValue::Scalar(_)
+        | RegisterValue::NaN
+        | RegisterValue::NegativeZero
+        | RegisterValue::PositiveInfinity
+        | RegisterValue::NegativeInfinity => Some("number"),
+        RegisterValue::String(_) | RegisterValue::Concatenation(_) => Some("string"),
+        RegisterValue::Function { .. } | RegisterValue::ConsoleLog | RegisterValue::Builtin(_) => {
+            Some("function")
+        }
+        RegisterValue::Object(_)
+        | RegisterValue::Array(_)
+        | RegisterValue::Arguments(_)
+        | RegisterValue::ConsoleObject
+        | RegisterValue::ExceptionObject(_)
+        | RegisterValue::Error { .. } => Some("object"),
+        _ => None,
+    }
 }
 
 fn known_pointer_equality(left: &RegisterValue, right: &RegisterValue) -> Option<bool> {
@@ -1510,22 +1747,6 @@ fn call_register_values(
     let this_register = -argv + i64::from(function.call_frame_this_argument_register);
     (1..count)
         .map(|index| read_register(function, registers, this_register + index as i64))
-        .collect()
-}
-
-fn scalar_call_arguments(
-    function: &VisitorFunction,
-    instruction: &VisitorInstruction,
-    registers: &BTreeMap<i64, RegisterValue>,
-) -> Result<Vec<ScalarExpression>, LlvmError> {
-    call_register_values(function, instruction, registers)?
-        .into_iter()
-        .map(|value| {
-            let RegisterValue::Scalar(expression) = value else {
-                return Err(imported_error("native scalar call received a non-integer"));
-            };
-            Ok(expression)
-        })
         .collect()
 }
 
@@ -1614,7 +1835,7 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
             | RegisterValue::BooleanScalar(_)
             | RegisterValue::String(_)
             | RegisterValue::Concatenation(_)
-            | RegisterValue::Function(_)
+            | RegisterValue::Function { .. }
             | RegisterValue::Object(_)
             | RegisterValue::Array(_)
             | RegisterValue::ConsoleObject
@@ -1656,7 +1877,7 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
         )),
         "op_typeof_is_function" => Some(matches!(
             value,
-            RegisterValue::Function(_) | RegisterValue::ConsoleLog | RegisterValue::Builtin(_)
+            RegisterValue::Function { .. } | RegisterValue::ConsoleLog | RegisterValue::Builtin(_)
         )),
         "op_is_undefined_or_null" => Some(matches!(
             value,
@@ -1677,7 +1898,7 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
         "op_is_big_int" => Some(false),
         "op_is_object" => Some(matches!(
             value,
-            RegisterValue::Function(_)
+            RegisterValue::Function { .. }
                 | RegisterValue::Object(_)
                 | RegisterValue::Array(_)
                 | RegisterValue::Arguments(_)
@@ -1689,11 +1910,11 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
         )),
         "op_is_callable" => Some(matches!(
             value,
-            RegisterValue::Function(_) | RegisterValue::ConsoleLog | RegisterValue::Builtin(_)
+            RegisterValue::Function { .. } | RegisterValue::ConsoleLog | RegisterValue::Builtin(_)
         )),
         "op_is_constructor" => match value {
             RegisterValue::Builtin(_) => Some(true),
-            RegisterValue::Function(_) | RegisterValue::ConsoleLog => None,
+            RegisterValue::Function { .. } | RegisterValue::ConsoleLog => None,
             _ => Some(false),
         },
         _ => None,
@@ -1710,7 +1931,7 @@ fn known_typeof(value: &RegisterValue) -> Option<&'static str> {
         | RegisterValue::PositiveInfinity
         | RegisterValue::NegativeInfinity => Some("number"),
         RegisterValue::String(_) | RegisterValue::Concatenation(_) => Some("string"),
-        RegisterValue::Function(_) | RegisterValue::ConsoleLog | RegisterValue::Builtin(_) => {
+        RegisterValue::Function { .. } | RegisterValue::ConsoleLog | RegisterValue::Builtin(_) => {
             Some("function")
         }
         RegisterValue::Null
@@ -1859,6 +2080,31 @@ fn child_function(
         .find(|function| function.parent == Some(parent) && relation_matches(&function.relation))
         .map(|function| function.id)
         .ok_or_else(|| imported_error(format!("f{} references missing child {index}", parent.0)))
+}
+
+fn resolve_environment(
+    environment: &StaticEnvironmentRef,
+    identifier: &str,
+) -> Option<StaticEnvironmentRef> {
+    let mut current = Some(environment.clone());
+    while let Some(candidate) = current {
+        let borrowed = candidate.borrow();
+        if borrowed.bindings.contains_key(identifier) {
+            drop(borrowed);
+            return Some(candidate);
+        }
+        current = borrowed.parent.clone();
+    }
+    None
+}
+
+fn environment_binding(
+    environment: &StaticEnvironmentRef,
+    identifier: &str,
+) -> Option<RegisterValue> {
+    let resolved = resolve_environment(environment, identifier)?;
+    let value = resolved.borrow().bindings.get(identifier).cloned();
+    value
 }
 
 fn identifier_is(
