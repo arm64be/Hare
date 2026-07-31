@@ -518,6 +518,54 @@
     "source": "const h026SizedArray = Array(3); console.log(h026SizedArray.length); const h026ExpectedObject = Object(); h026ExpectedObject.x = 7; console.log(h026ExpectedObject.x);"
   },
   {
+    "id": "object.static-enumeration",
+    "family": "object_property",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call_ignore_result",
+      "op_new_object",
+      "op_put_by_id",
+      "op_get_property_enumerator",
+      "op_enumerator_next",
+      "op_enumerator_get_by_val",
+      "op_jeq_ptr",
+      "op_jmp",
+      "op_check_tdz",
+      "op_check_traps",
+      "op_add",
+      "op_mul",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "const h026EnumeratedObject = { z: 1, a: 2 }; let h026EnumeratedTotal = 0; for (const h026EnumeratedKey in h026EnumeratedObject) h026EnumeratedTotal = h026EnumeratedTotal * 10 + h026EnumeratedObject[h026EnumeratedKey]; console.log(h026EnumeratedTotal);"
+  },
+  {
+    "id": "object.empty-static-enumeration",
+    "family": "object_property",
+    "lowering": "imported",
+    "opcodes": [
+      "op_mov",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call_ignore_result",
+      "op_new_object",
+      "op_get_property_enumerator",
+      "op_enumerator_next",
+      "op_jeq_ptr",
+      "op_jmp",
+      "op_check_traps",
+      "op_inc"
+    ],
+    "verified_opcodes": [],
+    "source": "let h026EmptyEnumeratedCount = 0; for (const h026EmptyEnumeratedKey in {}) h026EmptyEnumeratedCount++; console.log(h026EmptyEnumeratedCount);"
+  },
+  {
     "id": "locals.scalar-binding",
     "family": "locals",
     "lowering": "imported",

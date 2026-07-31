@@ -53,7 +53,9 @@ enum ScalarKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Builtin {
     Array,
+    EmptyPropertyNameEnumerator,
     Object,
+    SentinelString,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -79,6 +81,7 @@ enum RegisterValue {
     ConsoleNoArgument,
     BuiltinScope(Builtin),
     Builtin(Builtin),
+    Enumerator { heap_id: u32, keys: Vec<Box<str>> },
     Object(u32),
     Array(u32),
     Spread(Vec<Self>),
@@ -97,10 +100,12 @@ enum RegisterValue {
 enum StaticHeapEntry {
     Object {
         properties: BTreeMap<Box<str>, RegisterValue>,
+        property_order: Vec<Box<str>>,
     },
     Array {
         elements: BTreeMap<u32, RegisterValue>,
         properties: BTreeMap<Box<str>, RegisterValue>,
+        property_order: Vec<Box<str>>,
         length: u32,
     },
 }
@@ -358,6 +363,7 @@ fn lower_function(
                     id,
                     StaticHeapEntry::Object {
                         properties: BTreeMap::new(),
+                        property_order: Vec::new(),
                     },
                 );
                 registers.insert(destination, RegisterValue::Object(id));
@@ -387,6 +393,7 @@ fn lower_function(
                     StaticHeapEntry::Array {
                         elements,
                         properties: BTreeMap::new(),
+                        property_order: Vec::new(),
                         length,
                     },
                 );
@@ -410,6 +417,7 @@ fn lower_function(
                     StaticHeapEntry::Array {
                         elements: BTreeMap::new(),
                         properties: BTreeMap::new(),
+                        property_order: Vec::new(),
                         length,
                     },
                 );
@@ -473,6 +481,7 @@ fn lower_function(
                     StaticHeapEntry::Array {
                         elements,
                         properties: BTreeMap::new(),
+                        property_order: Vec::new(),
                         length,
                     },
                 );
@@ -570,6 +579,81 @@ fn lower_function(
                     destination,
                     RegisterValue::Scalar(ScalarExpression::Integer(length)),
                 );
+            }
+            "op_get_property_enumerator" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let (heap_id, keys) = static_enumerable_keys(&heap, &base)?;
+                let enumerator = if keys.is_empty() {
+                    RegisterValue::Builtin(Builtin::EmptyPropertyNameEnumerator)
+                } else {
+                    RegisterValue::Enumerator { heap_id, keys }
+                };
+                registers.insert(destination, enumerator);
+            }
+            "op_enumerator_next" => {
+                let property_name = signed_operand(instruction, "propertyName")?;
+                let mode = signed_operand(instruction, "mode")?;
+                let index = signed_operand(instruction, "index")?;
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let enumerator = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "enumerator")?,
+                )?;
+                let RegisterValue::Enumerator { heap_id, keys } = enumerator else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                ensure_enumerator_base(&base, heap_id)?;
+                let index_expression = scalar_register(function, &registers, index)?;
+                if !expression_is_closed(&index_expression) {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                }
+                let current_index =
+                    usize::try_from(evaluate(&index_expression, functions, &[], 0)?)
+                        .map_err(|_| unsupported(function, instruction, descriptor.opcode))?;
+                if let Some(key) = keys.get(current_index) {
+                    registers.insert(property_name, RegisterValue::String(key.clone()));
+                    let next_index = i64::try_from(current_index + 1)
+                        .map_err(|_| imported_error("enumerator index exceeds i64"))?;
+                    registers.insert(
+                        index,
+                        RegisterValue::Scalar(ScalarExpression::Integer(next_index)),
+                    );
+                    registers.insert(mode, RegisterValue::Scalar(ScalarExpression::Integer(0)));
+                } else {
+                    registers.insert(
+                        property_name,
+                        RegisterValue::Builtin(Builtin::SentinelString),
+                    );
+                }
+            }
+            "op_enumerator_get_by_val" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property_name = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "propertyName")?,
+                )?;
+                let enumerator = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "enumerator")?,
+                )?;
+                let RegisterValue::Enumerator { heap_id, .. } = enumerator else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                ensure_enumerator_base(&base, heap_id)?;
+                let RegisterValue::String(property_name) = property_name else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let value =
+                    static_get_property(&heap, &base, StaticPropertyKey::Name(property_name))?;
+                registers.insert(destination, value);
             }
             "op_get_by_val" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -816,6 +900,17 @@ fn lower_function(
                 let value = read_register(function, &registers, register)?;
                 registers.insert(register, value);
             }
+            "op_check_tdz" => {
+                let value = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "targetVirtualRegister")?,
+                )?;
+                if matches!(value, RegisterValue::Empty) {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                }
+            }
+            "op_check_traps" => {}
             "op_to_number" | "op_to_numeric" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let value = read_register(
@@ -1162,6 +1257,18 @@ fn known_branch_comparison(
 fn known_pointer_equality(left: &RegisterValue, right: &RegisterValue) -> Option<bool> {
     match (left, right) {
         (RegisterValue::Builtin(left), RegisterValue::Builtin(right)) => Some(left == right),
+        (
+            RegisterValue::Enumerator { .. },
+            RegisterValue::Builtin(Builtin::EmptyPropertyNameEnumerator),
+        )
+        | (
+            RegisterValue::Builtin(Builtin::EmptyPropertyNameEnumerator),
+            RegisterValue::Enumerator { .. },
+        )
+        | (RegisterValue::String(_), RegisterValue::Builtin(Builtin::SentinelString))
+        | (RegisterValue::Builtin(Builtin::SentinelString), RegisterValue::String(_)) => {
+            Some(false)
+        }
         _ => None,
     }
 }
@@ -1245,7 +1352,11 @@ fn read_register(
             }
             VisitorConstantValue::LinkTimeConstant(name) => match name.as_ref() {
                 "Array" => RegisterValue::Builtin(Builtin::Array),
+                "emptyPropertyNameEnumerator" => {
+                    RegisterValue::Builtin(Builtin::EmptyPropertyNameEnumerator)
+                }
                 "Object" => RegisterValue::Builtin(Builtin::Object),
+                "sentinelString" => RegisterValue::Builtin(Builtin::SentinelString),
                 _ => RegisterValue::Opaque,
             },
             VisitorConstantValue::Empty => RegisterValue::Empty,
@@ -1590,6 +1701,86 @@ fn static_property_key(
     }
 }
 
+fn static_enumerable_keys(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+) -> Result<(u32, Vec<Box<str>>), LlvmError> {
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        _ => return Err(imported_error("enumeration base is not a static object")),
+    };
+    let entry = heap
+        .get(&id)
+        .ok_or_else(|| imported_error("enumeration references a missing static heap entry"))?;
+    let keys = match entry {
+        StaticHeapEntry::Object {
+            properties,
+            property_order,
+        } => ordered_property_keys(properties, property_order)?,
+        StaticHeapEntry::Array {
+            elements,
+            properties,
+            property_order,
+            ..
+        } => {
+            let mut keys = elements
+                .keys()
+                .map(|index| index.to_string().into_boxed_str())
+                .collect::<Vec<_>>();
+            keys.extend(ordered_property_keys(properties, property_order)?);
+            keys
+        }
+    };
+    Ok((id, keys))
+}
+
+fn ordered_property_keys(
+    properties: &BTreeMap<Box<str>, RegisterValue>,
+    property_order: &[Box<str>],
+) -> Result<Vec<Box<str>>, LlvmError> {
+    let mut index_keys = properties
+        .keys()
+        .filter_map(|name| canonical_array_index(name).map(|index| (index, name.clone())))
+        .collect::<Vec<_>>();
+    index_keys.sort_by_key(|(index, _)| *index);
+    let mut keys = index_keys
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect::<Vec<_>>();
+    for name in property_order {
+        if canonical_array_index(name).is_none() && properties.contains_key(name) {
+            keys.push(name.clone());
+        }
+    }
+    let expected = properties
+        .keys()
+        .filter(|name| canonical_array_index(name).is_none())
+        .count();
+    if keys.len() != properties.len() || property_order.len() < expected {
+        return Err(imported_error(
+            "static property insertion order is incomplete",
+        ));
+    }
+    Ok(keys)
+}
+
+fn canonical_array_index(name: &str) -> Option<u32> {
+    name.parse::<u32>()
+        .ok()
+        .filter(|index| *index != u32::MAX && index.to_string() == name)
+}
+
+fn ensure_enumerator_base(base: &RegisterValue, expected_heap_id: u32) -> Result<(), LlvmError> {
+    match base {
+        RegisterValue::Object(heap_id) | RegisterValue::Array(heap_id)
+            if *heap_id == expected_heap_id =>
+        {
+            Ok(())
+        }
+        _ => Err(imported_error("enumerator base identity changed")),
+    }
+}
+
 fn static_get_property(
     heap: &BTreeMap<u32, StaticHeapEntry>,
     base: &RegisterValue,
@@ -1604,12 +1795,12 @@ fn static_get_property(
         .get(&id)
         .ok_or_else(|| imported_error("property read references a missing static heap entry"))?;
     match (entry, key) {
-        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Name(name)) => properties
+        (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Name(name)) => properties
             .get(&name)
             .cloned()
             .map(Ok)
             .unwrap_or_else(|| missing_static_property(&name, is_array)),
-        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Index(index)) => {
+        (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Index(index)) => {
             let name = index.to_string();
             properties
                 .get(name.as_str())
@@ -1651,14 +1842,33 @@ fn static_put_property(
         .get_mut(&id)
         .ok_or_else(|| imported_error("property write references a missing static heap entry"))?;
     match (entry, key) {
-        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Name(name)) => {
+        (
+            StaticHeapEntry::Object {
+                properties,
+                property_order,
+            },
+            StaticPropertyKey::Name(name),
+        ) => {
             if name.as_ref() == "__proto__" {
                 return Err(imported_error("static __proto__ mutation is not admitted"));
             }
+            if !properties.contains_key(&name) {
+                property_order.push(name.clone());
+            }
             properties.insert(name, value);
         }
-        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Index(index)) => {
-            properties.insert(index.to_string().into_boxed_str(), value);
+        (
+            StaticHeapEntry::Object {
+                properties,
+                property_order,
+            },
+            StaticPropertyKey::Index(index),
+        ) => {
+            let name = index.to_string().into_boxed_str();
+            if !properties.contains_key(&name) {
+                property_order.push(name.clone());
+            }
+            properties.insert(name, value);
         }
         (
             StaticHeapEntry::Array {
@@ -1676,7 +1886,17 @@ fn static_put_property(
                 "static array length mutation is not admitted",
             ));
         }
-        (StaticHeapEntry::Array { properties, .. }, StaticPropertyKey::Name(name)) => {
+        (
+            StaticHeapEntry::Array {
+                properties,
+                property_order,
+                ..
+            },
+            StaticPropertyKey::Name(name),
+        ) => {
+            if !properties.contains_key(&name) {
+                property_order.push(name.clone());
+            }
             properties.insert(name, value);
         }
     }
@@ -1701,14 +1921,14 @@ fn static_has_property(
         imported_error("property membership references a missing static heap entry")
     })?;
     match (entry, key) {
-        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Name(name)) => {
+        (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Name(name)) => {
             if properties.contains_key(&name) {
                 Ok(true)
             } else {
                 missing_static_property(&name, is_array).map(|_| false)
             }
         }
-        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Index(index)) => {
+        (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Index(index)) => {
             Ok(properties.contains_key(index.to_string().as_str()))
         }
         (StaticHeapEntry::Array { elements, .. }, StaticPropertyKey::Index(index)) => {
@@ -1746,11 +1966,28 @@ fn static_delete_property(
         .get_mut(&id)
         .ok_or_else(|| imported_error("property delete references a missing static heap entry"))?;
     match (entry, key) {
-        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Name(name)) => {
-            properties.remove(&name);
+        (
+            StaticHeapEntry::Object {
+                properties,
+                property_order,
+            },
+            StaticPropertyKey::Name(name),
+        ) => {
+            if properties.remove(&name).is_some() {
+                property_order.retain(|ordered| ordered != &name);
+            }
         }
-        (StaticHeapEntry::Object { properties }, StaticPropertyKey::Index(index)) => {
-            properties.remove(index.to_string().as_str());
+        (
+            StaticHeapEntry::Object {
+                properties,
+                property_order,
+            },
+            StaticPropertyKey::Index(index),
+        ) => {
+            let name = index.to_string();
+            if properties.remove(name.as_str()).is_some() {
+                property_order.retain(|ordered| ordered.as_ref() != name);
+            }
         }
         (StaticHeapEntry::Array { elements, .. }, StaticPropertyKey::Index(index)) => {
             elements.remove(&index);
@@ -1760,8 +1997,17 @@ fn static_delete_property(
         {
             return Err(imported_error("array length is not configurable"));
         }
-        (StaticHeapEntry::Array { properties, .. }, StaticPropertyKey::Name(name)) => {
-            properties.remove(&name);
+        (
+            StaticHeapEntry::Array {
+                properties,
+                property_order,
+                ..
+            },
+            StaticPropertyKey::Name(name),
+        ) => {
+            if properties.remove(&name).is_some() {
+                property_order.retain(|ordered| ordered != &name);
+            }
         }
     }
     Ok(())
