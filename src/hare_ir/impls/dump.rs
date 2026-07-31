@@ -1,0 +1,167 @@
+use std::fmt::Write as _;
+
+use crate::{OperandValue, OwnedVisitorUnit, SourceText, ValidationError};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DumpIdentity<'a> {
+    pub target: &'a str,
+    pub profile: &'a str,
+}
+
+/// Renders a deterministic diagnostic view of an owned visitor unit.
+///
+/// This is deliberately one-way: Hare never parses this text and never uses it
+/// as an application artifact or cache input.
+pub fn render_visitor_dump(
+    unit: &OwnedVisitorUnit,
+    identity: DumpIdentity<'_>,
+) -> Result<String, ValidationError> {
+    unit.validate()?;
+    let mut output = String::new();
+    writeln!(
+        output,
+        "hare-dump schema={} bun={} webkit={} target={} profile={}",
+        unit.schema_version,
+        unit.bun_revision,
+        unit.webkit_revision,
+        escaped(identity.target),
+        escaped(identity.profile)
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "input={:?} structurally_complete={}",
+        unit.input_kind, unit.structurally_complete
+    )
+    .unwrap();
+
+    for source in &unit.sources {
+        write!(
+            output,
+            "source s{} name={} line={} column={} ",
+            source.id.0,
+            escaped(&normalized_public_name(&source.public_name)),
+            source.start_line,
+            source.start_column
+        )
+        .unwrap();
+        match &source.text {
+            SourceText::Latin1(bytes) => {
+                write!(output, "latin1=").unwrap();
+                for byte in bytes {
+                    write!(output, "{byte:02x}").unwrap();
+                }
+            }
+            SourceText::Utf16(code_units) => {
+                write!(output, "utf16=").unwrap();
+                for code_unit in code_units {
+                    write!(output, "{code_unit:04x}").unwrap();
+                }
+            }
+        }
+        output.push('\n');
+    }
+
+    for function in &unit.functions {
+        writeln!(
+            output,
+            "function f{} parent={} relation={:?} specialization={:?} source=s{} parse={} script={} code={} lexical=0x{:08x} features=0x{:08x} params={} vars={} locals={} this={} scope={} bytes={}",
+            function.id.0,
+            function
+                .parent
+                .map_or_else(|| "-".into(), |parent| format!("f{}", parent.0)),
+            function.relation,
+            function.specialization,
+            function.source.0,
+            function.parse_mode,
+            function.script_mode,
+            function.code_type,
+            function.lexical_features,
+            function.code_features,
+            function.num_parameters,
+            function.num_vars,
+            function.num_callee_locals,
+            function.this_register,
+            function.scope_register,
+            function.instruction_bytes
+        )
+        .unwrap();
+        for instruction in &function.instructions {
+            writeln!(
+                output,
+                "  instruction offset={} opcode={} size={} opcode_width={} operand_width={}",
+                instruction.byte_offset,
+                instruction.opcode_id,
+                instruction.encoded_size,
+                instruction.opcode_id_bytes,
+                instruction.width_bytes
+            )
+            .unwrap();
+            for operand in &instruction.operands {
+                writeln!(
+                    output,
+                    "    operand id={} role={:?} value={}",
+                    escaped(&operand.manifest_id),
+                    operand.role,
+                    render_operand_value(&operand.value)
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    for (definition, state) in &unit.definition_coverage {
+        writeln!(
+            output,
+            "coverage id={} state={state:?}",
+            escaped(definition)
+        )
+        .unwrap();
+    }
+    Ok(output)
+}
+
+fn normalized_public_name(name: &str) -> String {
+    if name.starts_with("/$bunfs/") || (!name.starts_with('/') && !is_windows_absolute(name)) {
+        return name.into();
+    }
+    let basename = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    format!("<absolute>/{basename}")
+}
+
+fn is_windows_absolute(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\')
+}
+
+fn escaped(value: &str) -> String {
+    format!("\"{}\"", value.escape_default())
+}
+
+fn render_operand_value(value: &OperandValue) -> String {
+    match value {
+        OperandValue::Signed(value) => format!("signed:{value}"),
+        OperandValue::Unsigned(value) => format!("unsigned:{value}"),
+        OperandValue::Boolean(value) => format!("boolean:{value}"),
+        OperandValue::Bytes(bytes) => {
+            let mut result = String::from("bytes:");
+            for byte in bytes {
+                write!(result, "{byte:02x}").unwrap();
+            }
+            result
+        }
+        OperandValue::Utf16(code_units) => {
+            let mut result = String::from("utf16:");
+            for code_unit in code_units {
+                write!(result, "{code_unit:04x}").unwrap();
+            }
+            result
+        }
+        OperandValue::StableId(value) => format!("stable:{value}"),
+        OperandValue::ValidatedAbsent => "validated-absent".into(),
+        OperandValue::Excluded => "excluded".into(),
+    }
+}

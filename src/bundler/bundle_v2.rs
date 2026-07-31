@@ -1347,6 +1347,15 @@ pub mod bv2_impl {
                 source: &[u8],
                 source_provider_url: &mut bun_core::String,
             ) -> Option<Box<[u8]>>;
+
+            /// Defined in `bun_jsc::hare_compiler`. The result is a fully
+            /// owned structural import; no JSC pointer or serialized bytecode
+            /// crosses this link-time Rust boundary.
+            safe fn __bun_jsc_import_hare(
+                format: crate::options_impl::Format,
+                source: &[u8],
+                source_provider_url: &mut bun_core::String,
+            ) -> Result<hare_ir::OwnedVisitorUnit, hare_ir::HareImportError>;
         }
 
         unsafe extern "Rust" {
@@ -1386,6 +1395,15 @@ pub mod bv2_impl {
             source_provider_url: &mut bun_core::String,
         ) -> Option<Box<[u8]>> {
             __bun_jsc_generate_cached_bytecode(format, source, source_provider_url)
+        }
+
+        #[inline]
+        pub(crate) fn import_hare(
+            format: crate::options_impl::Format,
+            source: &[u8],
+            source_provider_url: &mut bun_core::String,
+        ) -> Result<hare_ir::OwnedVisitorUnit, hare_ir::HareImportError> {
+            __bun_jsc_import_hare(format, source, source_provider_url)
         }
 
         /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` — the
@@ -2809,7 +2827,9 @@ pub mod bv2_impl {
                 unsafe { interned_slice(&this.transpiler.options.public_path) };
             this.linker.options.target = this.transpiler.options.target;
             this.linker.options.output_format = this.transpiler.options.output_format;
-            this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
+            this.linker.options.generate_bytecode_cache =
+                this.transpiler.options.bytecode || this.transpiler.options.hare;
+            this.linker.options.hare = this.transpiler.options.hare;
             this.linker.options.compile = this.transpiler.options.compile;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.

@@ -364,6 +364,7 @@ dependencies = [
  "const_format",
  "enum-map",
  "enumset",
+ "hare_ir",
  "libc",
  "lol_html",
  "scopeguard",
@@ -1190,6 +1191,8 @@ dependencies = [
  "const_format",
  "enum-map",
  "enumset",
+ "hare_ir",
+ "hare_llvm",
  "libc",
  "scopeguard",
  "strum",
@@ -2728,6 +2731,24 @@ dependencies = [
  "cfg-if",
  "crunchy",
  "zerocopy",
+]
+
+[[package]]
+name = "hare_analysis"
+version = "0.0.0"
+dependencies = [
+ "hare_ir",
+]
+
+[[package]]
+name = "hare_ir"
+version = "0.0.0"
+
+[[package]]
+name = "hare_llvm"
+version = "0.0.0"
+dependencies = [
+ "hare_ir",
 ]
 
 [[package]]

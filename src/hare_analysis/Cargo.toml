@@ -1,0 +1,14 @@
+[package]
+name = "hare_analysis"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+hare_ir.workspace = true
+

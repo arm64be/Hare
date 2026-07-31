@@ -473,6 +473,8 @@ pub mod any_promise;
 pub mod cached_bytecode;
 #[path = "DOMFormData.rs"]
 pub mod dom_form_data;
+#[path = "HareCompiler.rs"]
+pub mod hare_compiler;
 #[path = "host_object.rs"]
 pub mod host_object;
 #[path = "JSArrayIterator.rs"]

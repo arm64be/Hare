@@ -16,11 +16,11 @@ thread, worktree, scheduling, and fanout instruction later in this historical
 handoff.
 
 The repository entered solo execution on `claude/hare-bootstrap` at
-`caef8f4154`. H001-H004 had passed their W0 checkpoints; H005 still required an
-exact Effect pin/provenance record and an exception-containment correction.
-Solo execution selected and audited `effect@3.22.0`, generated the complete
-artifact manifest, corrected the callback boundary, and closed H005. H006 and
-H007 are the next dependency-ready compiler inputs.
+`caef8f4154`. Solo execution closed the remaining H005 Effect pin/provenance
+and exception-containment work, completed the H006/H007 generated JSC inventory
+and porting guide, and then passed the H008-H011 W1 compiler-skeleton gate. The
+current dependency state lives in `HARE_TASKS.tsv`; H012-H019 are the first
+dependency-ready W2 missions, while H020-H022 still depend on H018.
 
 Read the remainder like a letter from the people who left the desk, not as
 current task-management instructions.

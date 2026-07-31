@@ -1229,6 +1229,7 @@ impl From<BunError> for LinkError {
 
 pub struct LinkerOptions {
     pub(crate) generate_bytecode_cache: bool,
+    pub(crate) hare: bool,
     pub(crate) output_format: Format,
     pub(crate) ignore_dce_annotations: bool,
     pub(crate) emit_dce_annotations: bool,
@@ -1258,6 +1259,7 @@ impl Default for LinkerOptions {
     fn default() -> Self {
         Self {
             generate_bytecode_cache: false,
+            hare: false,
             output_format: Format::Esm,
             ignore_dce_annotations: false,
             emit_dce_annotations: true,

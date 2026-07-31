@@ -4,6 +4,28 @@ import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "no
 import { join } from "path";
 
 describe("Bun.build compile", () => {
+  test("--hare reaches the owned native frontend without emitting a standalone fallback", async () => {
+    using dir = tempDir("build-compile-hare-frontend", {
+      "app.js": `function nested(value) { return value + 1; } console.log(nested(41));`,
+    });
+
+    const outfile = join(String(dir), "app");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--hare", join(String(dir), "app.js"), "--outfile", outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toMatch(
+      /Hare frontend imported \d+ owned function\(s\) for \.\/app\.js; native application lowering is not yet converged/,
+    );
+    expect(existsSync(outfile)).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
   test("compile with current platform target string", async () => {
     using dir = tempDir("build-compile-target", {
       "app.js": `console.log("Cross-compiled app");`,

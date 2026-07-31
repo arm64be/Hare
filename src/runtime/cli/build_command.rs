@@ -155,6 +155,7 @@ impl BuildCommand {
             options::SourceMapOption::from_api(ctx.args.source_map);
 
         this_transpiler.options.compile = ctx.bundler_options.compile;
+        this_transpiler.options.hare = ctx.bundler_options.hare;
 
         if this_transpiler.options.source_map == options::SourceMapOption::External
             && ctx.bundler_options.outdir.is_empty()

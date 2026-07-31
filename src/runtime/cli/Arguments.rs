@@ -425,6 +425,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
+            "--hare                           Compile a closed-world standalone executable to native code (requires --compile)"
+        ),
+        parse_param!(
             "--watch                          Automatically restart the process on file change"
         ),
         parse_param!(
@@ -1857,6 +1860,16 @@ fn parse_build_command_options(
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
+    ctx.bundler_options.hare = args.flag(b"--hare");
+
+    if ctx.bundler_options.hare && !args.flag(b"--compile") {
+        Output::err_generic("--hare requires --compile", ());
+        Global::crash();
+    }
+    if ctx.bundler_options.hare && ctx.bundler_options.bytecode {
+        Output::err_generic("--hare cannot be combined with --bytecode", ());
+        Global::crash();
+    }
 
     let production = args.flag(b"--production");
 

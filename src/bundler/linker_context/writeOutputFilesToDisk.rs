@@ -409,6 +409,26 @@ pub(crate) fn write_output_files_to_disk(
                     // `defer source_provider_url.deref()` handled by Drop on OwnedString.
                     let mut source_provider_url = bun_core::OwnedString::new(source_provider_url);
 
+                    if c.options.hare {
+                        let diagnostic = match crate::bundle_v2::dispatch::import_hare(
+                            c.options.output_format,
+                            &code_result.buffer,
+                            &mut source_provider_url,
+                        ) {
+                            Ok(unit) => format!(
+                                "Hare frontend imported {} owned function(s) for {}; native application lowering is not yet converged",
+                                unit.functions.len(),
+                                bstr::BStr::new(&chunk.final_rel_path)
+                            ),
+                            Err(error) => format!(
+                                "Hare frontend import failed for {}: {error}",
+                                bstr::BStr::new(&chunk.final_rel_path)
+                            ),
+                        };
+                        let _ = c.log_disjoint().add_error(None, Loc::EMPTY, diagnostic);
+                        return Err(crate::Error::BuildFailed);
+                    }
+
                     if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                         c.options.output_format,
                         &code_result.buffer,

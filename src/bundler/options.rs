@@ -1269,6 +1269,7 @@ pub struct BundleOptions<'a> {
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
     pub bytecode: bool,
+    pub hare: bool,
 
     pub code_coverage: bool,
     pub debugger: bool,
@@ -1461,6 +1462,7 @@ impl<'a> BundleOptions<'a> {
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             bytecode: self.bytecode,
+            hare: self.hare,
             code_coverage: self.code_coverage,
             debugger: self.debugger,
             compile: self.compile,
@@ -1714,6 +1716,7 @@ impl<'a> BundleOptions<'a> {
             ignore_dce_annotations: false,
             emit_dce_annotations: false,
             bytecode: false,
+            hare: false,
             code_coverage: false,
             debugger: false,
             compile: false,

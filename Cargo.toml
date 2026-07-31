@@ -68,6 +68,9 @@ members = [
   "src/url",
   "src/windows_sys",
   "src/jsc",
+  "src/hare_ir",
+  "src/hare_analysis",
+  "src/hare_llvm",
   "src/jsc_macros",
   "src/ptr",
   "src/boringssl",
@@ -425,6 +428,9 @@ bun_sourcemap_jsc = { path = "src/sourcemap_jsc" }
 bun_url = { path = "src/url" }
 bun_windows_sys = { path = "src/windows_sys" }
 bun_jsc = { path = "src/jsc" }
+hare_ir = { path = "src/hare_ir" }
+hare_analysis = { path = "src/hare_analysis" }
+hare_llvm = { path = "src/hare_llvm" }
 bun_jsc_macros = { path = "src/jsc_macros" }
 bun_ptr = { path = "src/ptr" }
 bun_boringssl = { path = "src/boringssl" }
