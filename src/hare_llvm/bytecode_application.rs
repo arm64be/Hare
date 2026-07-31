@@ -36,18 +36,35 @@ struct ScalarFunction {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum RegisterValue {
     Scalar(ScalarExpression),
+    String(Box<str>),
+    Concatenation(Vec<Self>),
     Function(FunctionId),
     ConsoleScope,
+    NaNScope,
+    InfinityScope,
     ConsoleObject,
     ConsoleLog,
+    ConsoleNoArgument,
     Undefined,
+    Null,
+    Boolean(bool),
+    NaN,
+    NegativeZero,
+    PositiveInfinity,
+    NegativeInfinity,
     Opaque,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LoweredBody {
     result: Option<ScalarExpression>,
-    writes: Vec<ScalarExpression>,
+    writes: Vec<RegisterValue>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum NativeWrite {
+    Integer(ScalarExpression),
+    Text(Box<[u8]>),
 }
 
 /// Compile the first executable Tier 1 slice directly from the owned JSC
@@ -101,10 +118,12 @@ pub fn compile_imported_scalar_application(
             "root function performs no admitted native output",
         ));
     }
-    for expression in &root_body.writes {
-        evaluate(expression, &functions, &[], 0)?;
-    }
-    emit_application(target, &functions, &root_body.writes)
+    let writes = root_body
+        .writes
+        .into_iter()
+        .map(|value| normalize_write(value, &functions))
+        .collect::<Result<Vec<_>, _>>()?;
+    emit_application(target, &functions, &writes)
 }
 
 fn lower_function(
@@ -153,6 +172,10 @@ fn lower_function(
                 let identifier = unsigned_operand(instruction, "var")?;
                 if identifier_is(function, identifier, b"console")? {
                     registers.insert(destination, RegisterValue::ConsoleScope);
+                } else if identifier_is(function, identifier, b"NaN")? {
+                    registers.insert(destination, RegisterValue::NaNScope);
+                } else if identifier_is(function, identifier, b"Infinity")? {
+                    registers.insert(destination, RegisterValue::InfinityScope);
                 } else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
@@ -165,6 +188,14 @@ fn lower_function(
                     && identifier_is(function, identifier, b"console")?
                 {
                     registers.insert(destination, RegisterValue::ConsoleObject);
+                } else if matches!(registers.get(&scope), Some(RegisterValue::NaNScope))
+                    && identifier_is(function, identifier, b"NaN")?
+                {
+                    registers.insert(destination, RegisterValue::NaN);
+                } else if matches!(registers.get(&scope), Some(RegisterValue::InfinityScope))
+                    && identifier_is(function, identifier, b"Infinity")?
+                {
+                    registers.insert(destination, RegisterValue::PositiveInfinity);
                 } else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
@@ -209,6 +240,49 @@ fn lower_function(
                     RegisterValue::Scalar(ScalarExpression::Negate(Box::new(source))),
                 );
             }
+            "op_to_primitive" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let source =
+                    read_register(function, &registers, signed_operand(instruction, "src")?)?;
+                if matches!(
+                    source,
+                    RegisterValue::Scalar(_)
+                        | RegisterValue::String(_)
+                        | RegisterValue::Concatenation(_)
+                        | RegisterValue::Undefined
+                        | RegisterValue::Null
+                        | RegisterValue::Boolean(_)
+                        | RegisterValue::NaN
+                        | RegisterValue::NegativeZero
+                        | RegisterValue::PositiveInfinity
+                        | RegisterValue::NegativeInfinity
+                ) {
+                    registers.insert(destination, source);
+                } else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                }
+            }
+            "op_strcat" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let source = signed_operand(instruction, "src")?;
+                let count = signed_operand(instruction, "count")?;
+                let count = usize::try_from(count)
+                    .map_err(|_| imported_error("string concatenation count is negative"))?;
+                if count == 0 {
+                    return Err(imported_error("string concatenation has no operands"));
+                }
+                let mut values = Vec::with_capacity(count);
+                for index in 0..count {
+                    let index = i64::try_from(index)
+                        .map_err(|_| imported_error("string concatenation range exceeds i64"))?;
+                    let value = read_register(function, &registers, source - index)?;
+                    if !is_admitted_primitive(&value) {
+                        return Err(unsupported(function, instruction, descriptor.opcode));
+                    }
+                    values.push(value);
+                }
+                registers.insert(destination, RegisterValue::Concatenation(values));
+            }
             "op_call" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let callee_register = signed_operand(instruction, "callee")?;
@@ -217,7 +291,7 @@ fn lower_function(
                 else {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 };
-                let arguments = call_arguments(function, instruction, &registers)?;
+                let arguments = scalar_call_arguments(function, instruction, &registers)?;
                 registers.insert(
                     destination,
                     RegisterValue::Scalar(ScalarExpression::Call {
@@ -234,19 +308,29 @@ fn lower_function(
                 ) {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
-                let mut arguments = call_arguments(function, instruction, &registers)?;
-                if arguments.len() != 1 {
+                let mut arguments = call_register_values(function, instruction, &registers)?;
+                if arguments.len() > 1 {
                     return Err(imported_error(
-                        "imported scalar console.log requires exactly one argument",
+                        "imported scalar console.log accepts at most one argument",
                     ));
                 }
-                writes.push(arguments.remove(0));
+                writes.push(arguments.pop().unwrap_or(RegisterValue::ConsoleNoArgument));
             }
             "op_ret" => {
                 let value = signed_operand(instruction, "value")?;
                 match read_register(function, &registers, value)? {
                     RegisterValue::Scalar(expression) => result = Some(expression),
-                    RegisterValue::Undefined | RegisterValue::Opaque if function.id.0 == 0 => {}
+                    RegisterValue::Undefined
+                    | RegisterValue::Null
+                    | RegisterValue::Boolean(_)
+                    | RegisterValue::String(_)
+                    | RegisterValue::Concatenation(_)
+                    | RegisterValue::NaN
+                    | RegisterValue::NegativeZero
+                    | RegisterValue::PositiveInfinity
+                    | RegisterValue::NegativeInfinity
+                    | RegisterValue::Opaque
+                        if function.id.0 == 0 => {}
                     _ => return Err(unsupported(function, instruction, descriptor.opcode)),
                 }
             }
@@ -256,11 +340,11 @@ fn lower_function(
     Ok(LoweredBody { result, writes })
 }
 
-fn call_arguments(
+fn call_register_values(
     function: &VisitorFunction,
     instruction: &VisitorInstruction,
     registers: &BTreeMap<i64, RegisterValue>,
-) -> Result<Vec<ScalarExpression>, LlvmError> {
+) -> Result<Vec<RegisterValue>, LlvmError> {
     let count = usize::try_from(unsigned_operand(instruction, "argc")?)
         .map_err(|_| imported_error("call argument count does not fit usize"))?;
     if count == 0 {
@@ -270,7 +354,23 @@ fn call_arguments(
         .map_err(|_| imported_error("call argv does not fit i64"))?;
     let this_register = -argv + i64::from(function.call_frame_this_argument_register);
     (1..count)
-        .map(|index| scalar_register(function, registers, this_register + index as i64))
+        .map(|index| read_register(function, registers, this_register + index as i64))
+        .collect()
+}
+
+fn scalar_call_arguments(
+    function: &VisitorFunction,
+    instruction: &VisitorInstruction,
+    registers: &BTreeMap<i64, RegisterValue>,
+) -> Result<Vec<ScalarExpression>, LlvmError> {
+    call_register_values(function, instruction, registers)?
+        .into_iter()
+        .map(|value| {
+            let RegisterValue::Scalar(expression) = value else {
+                return Err(imported_error("native scalar call received a non-integer"));
+            };
+            Ok(expression)
+        })
         .collect()
 }
 
@@ -294,27 +394,31 @@ fn read_register(
             }
             VisitorConstantValue::Float64Bits(bits) => {
                 let value = f64::from_bits(*bits);
-                if !value.is_finite()
-                    || value.fract() != 0.0
-                    || value.abs() > MAX_SAFE_INTEGER as f64
-                    || (value == 0.0 && value.is_sign_negative())
-                {
+                if value.is_nan() {
+                    RegisterValue::NaN
+                } else if value == f64::INFINITY {
+                    RegisterValue::PositiveInfinity
+                } else if value == f64::NEG_INFINITY {
+                    RegisterValue::NegativeInfinity
+                } else if value == 0.0 && value.is_sign_negative() {
+                    RegisterValue::NegativeZero
+                } else if value.fract() == 0.0 && value.abs() <= MAX_SAFE_INTEGER as f64 {
+                    RegisterValue::Scalar(ScalarExpression::Integer(value as i64))
+                } else {
                     return Err(imported_error(format!(
                         "f{} uses a non-integral scalar constant",
                         function.id.0
                     )));
                 }
-                RegisterValue::Scalar(ScalarExpression::Integer(value as i64))
             }
             VisitorConstantValue::Undefined => RegisterValue::Undefined,
+            VisitorConstantValue::Null => RegisterValue::Null,
+            VisitorConstantValue::Boolean(value) => RegisterValue::Boolean(*value),
+            VisitorConstantValue::String(value) => {
+                RegisterValue::String(source_text_to_string(value)?.into_boxed_str())
+            }
             VisitorConstantValue::Empty | VisitorConstantValue::UnimplementedCell(_) => {
                 RegisterValue::Opaque
-            }
-            _ => {
-                return Err(imported_error(format!(
-                    "f{} uses a non-scalar constant",
-                    function.id.0
-                )));
             }
         });
     }
@@ -338,6 +442,90 @@ fn scalar_register(
         )));
     };
     Ok(expression)
+}
+
+fn is_admitted_primitive(value: &RegisterValue) -> bool {
+    matches!(
+        value,
+        RegisterValue::Scalar(_)
+            | RegisterValue::String(_)
+            | RegisterValue::Concatenation(_)
+            | RegisterValue::Undefined
+            | RegisterValue::Null
+            | RegisterValue::Boolean(_)
+            | RegisterValue::NaN
+            | RegisterValue::NegativeZero
+            | RegisterValue::PositiveInfinity
+            | RegisterValue::NegativeInfinity
+    )
+}
+
+fn source_text_to_string(value: &SourceText) -> Result<String, LlvmError> {
+    match value {
+        SourceText::Latin1(bytes) => Ok(bytes.iter().map(|byte| char::from(*byte)).collect()),
+        SourceText::Utf16(code_units) => String::from_utf16(code_units)
+            .map_err(|_| imported_error("string constant contains an unpaired UTF-16 surrogate")),
+    }
+}
+
+fn normalize_write(
+    value: RegisterValue,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
+) -> Result<NativeWrite, LlvmError> {
+    if let RegisterValue::Scalar(expression) = value {
+        evaluate(&expression, functions, &[], 0)?;
+        return Ok(NativeWrite::Integer(expression));
+    }
+    let mut text = String::new();
+    append_console_string(&value, functions, &mut text)?;
+    text.push('\n');
+    Ok(NativeWrite::Text(text.into_bytes().into_boxed_slice()))
+}
+
+fn append_console_string(
+    value: &RegisterValue,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
+    output: &mut String,
+) -> Result<(), LlvmError> {
+    match value {
+        RegisterValue::Scalar(expression) => {
+            let value = evaluate(expression, functions, &[], 0)?;
+            write!(output, "{value}").unwrap();
+        }
+        RegisterValue::String(value) => output.push_str(value),
+        RegisterValue::ConsoleNoArgument => {}
+        RegisterValue::Concatenation(values) => {
+            for value in values {
+                append_js_string(value, functions, output)?;
+            }
+        }
+        RegisterValue::Undefined => output.push_str("undefined"),
+        RegisterValue::Null => output.push_str("null"),
+        RegisterValue::Boolean(value) => output.push_str(if *value { "true" } else { "false" }),
+        RegisterValue::NaN => output.push_str("NaN"),
+        RegisterValue::NegativeZero => output.push_str("-0"),
+        RegisterValue::PositiveInfinity => output.push_str("Infinity"),
+        RegisterValue::NegativeInfinity => output.push_str("-Infinity"),
+        _ => return Err(imported_error("console.log received a non-primitive value")),
+    }
+    Ok(())
+}
+
+fn append_js_string(
+    value: &RegisterValue,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
+    output: &mut String,
+) -> Result<(), LlvmError> {
+    match value {
+        RegisterValue::NegativeZero => output.push('0'),
+        RegisterValue::Concatenation(values) => {
+            for value in values {
+                append_js_string(value, functions, output)?;
+            }
+        }
+        _ => append_console_string(value, functions, output)?,
+    }
+    Ok(())
 }
 
 fn child_function(
@@ -518,13 +706,41 @@ fn evaluate(
 fn emit_application(
     target: TargetLayout,
     functions: &BTreeMap<FunctionId, ScalarFunction>,
-    writes: &[ScalarExpression],
+    writes: &[NativeWrite],
 ) -> Result<String, LlvmError> {
     let mut output = String::new();
     output.push_str("; Hare imported scalar application\n");
     output.push_str("source_filename = \"hare-imported-application\"\n");
     let _ = writeln!(output, "target datalayout = \"{}\"", target.data_layout);
     let _ = writeln!(output, "target triple = \"{}\"\n", target.triple);
+    for (index, write) in writes.iter().enumerate() {
+        let NativeWrite::Text(bytes) = write else {
+            continue;
+        };
+        let _ = write!(
+            output,
+            "@.hare.write.{index} = private unnamed_addr constant [{} x i8] c\"",
+            bytes.len()
+        );
+        for byte in bytes {
+            match byte {
+                b' '..=b'~' if !matches!(byte, b'"' | b'\\') => {
+                    output.push(char::from(*byte));
+                }
+                _ => {
+                    let _ = write!(output, "\\{byte:02X}");
+                }
+            }
+        }
+        output.push_str("\", align 1\n");
+    }
+    if writes
+        .iter()
+        .any(|write| matches!(write, NativeWrite::Text(_)))
+    {
+        output.push('\n');
+    }
+    output.push_str("declare i64 @Bun__Hare__writeStdout(ptr, i64) nounwind\n");
     output.push_str("declare i64 @Bun__Hare__writeInt64Line(i64) nounwind\n\n");
 
     for function in functions.values() {
@@ -547,15 +763,35 @@ fn emit_application(
     );
     let mut emitter = ExpressionEmitter::new(&mut output);
     let mut success = "true".to_string();
-    for expression in writes {
-        let value = emitter.emit(expression)?;
-        let written = emitter.temporary();
-        let _ = writeln!(
-            emitter.output,
-            "  {written} = call i64 @Bun__Hare__writeInt64Line(i64 {value})"
-        );
-        let write_ok = emitter.temporary();
-        let _ = writeln!(emitter.output, "  {write_ok} = icmp sge i64 {written}, 0");
+    for (index, write) in writes.iter().enumerate() {
+        let write_ok = match write {
+            NativeWrite::Integer(expression) => {
+                let value = emitter.emit(expression)?;
+                let written = emitter.temporary();
+                let _ = writeln!(
+                    emitter.output,
+                    "  {written} = call i64 @Bun__Hare__writeInt64Line(i64 {value})"
+                );
+                let write_ok = emitter.temporary();
+                let _ = writeln!(emitter.output, "  {write_ok} = icmp sge i64 {written}, 0");
+                write_ok
+            }
+            NativeWrite::Text(bytes) => {
+                let written = emitter.temporary();
+                let _ = writeln!(
+                    emitter.output,
+                    "  {written} = call i64 @Bun__Hare__writeStdout(ptr @.hare.write.{index}, i64 {})",
+                    bytes.len()
+                );
+                let write_ok = emitter.temporary();
+                let _ = writeln!(
+                    emitter.output,
+                    "  {write_ok} = icmp eq i64 {written}, {}",
+                    bytes.len()
+                );
+                write_ok
+            }
+        };
         if success == "true" {
             success = write_ok;
         } else {
@@ -688,11 +924,12 @@ mod tests {
             ),
         };
         let functions = BTreeMap::from([(function.id, function)]);
-        let writes = [ScalarExpression::Call {
+        let expression = ScalarExpression::Call {
             function: FunctionId(1),
             arguments: vec![ScalarExpression::Integer(41)],
-        }];
-        assert_eq!(evaluate(&writes[0], &functions, &[], 0).unwrap(), 42);
+        };
+        let writes = [NativeWrite::Integer(expression.clone())];
+        assert_eq!(evaluate(&expression, &functions, &[], 0).unwrap(), 42);
         let ir = emit_application(TargetLayout::host().unwrap(), &functions, &writes).unwrap();
         assert!(ir.contains("define internal i64 @hare.fn.1(i64 %arg0)"));
         assert!(ir.contains(" = add i64 %arg0, 1"));

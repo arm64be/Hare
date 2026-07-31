@@ -77,7 +77,8 @@ test.skipIf(!isLinux)(
     expect(referenceExitCode).toBe(0);
 
     let nativeStdout = "";
-    for (const lowering of ["imported", "source-transition"] as const) {
+    const lowerings = [...new Set(cases.map(testCase => testCase.lowering))];
+    for (const lowering of lowerings) {
       const groupSource = cases
         .filter(testCase => testCase.lowering === lowering)
         .map(testCase => `// ${testCase.id}\n${testCase.source}`)
@@ -88,7 +89,7 @@ test.skipIf(!isLinux)(
       await using compile = Bun.spawn({
         cmd: [bunExe(), "build", "--compile", "--hare", entrypoint, "--outfile", executable],
         cwd: String(dir),
-        env: bunEnv,
+        env: { ...bunEnv, BUN_DEBUG_HARE_IR: "1" },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -98,6 +99,8 @@ test.skipIf(!isLinux)(
         compile.exited,
       ]);
       expect(compileStderr).not.toContain("error:");
+      expect(compileStderr).toContain("hare-dump schema=1");
+      expect(compileStderr).toContain("structurally_complete=true");
       expect(readHareGraphFlags(executable) & (1 << 4)).toBe(1 << 4);
       expect(compileExitCode).toBe(0);
 

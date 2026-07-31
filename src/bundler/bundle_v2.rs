@@ -1419,6 +1419,25 @@ pub mod bv2_impl {
             source: &[u8],
         ) -> Result<Box<[u8]>, hare_llvm::LlvmError> {
             let target = hare_llvm::TargetLayout::host()?;
+            if std::env::var_os("BUN_DEBUG_HARE_IR").is_some() {
+                let dump = hare_ir::render_visitor_dump(
+                    unit,
+                    hare_ir::DumpIdentity {
+                        target: target.triple,
+                        profile: if cfg!(debug_assertions) {
+                            "debug"
+                        } else {
+                            "release"
+                        },
+                    },
+                )
+                .map_err(|error| {
+                    hare_llvm::LlvmError::ImportedApplication(
+                        format!("cannot render owned visitor dump: {error}").into_boxed_str(),
+                    )
+                })?;
+                eprintln!("{dump}");
+            }
             let llvm_ir = match hare_llvm::compile_imported_scalar_application(unit, target) {
                 Ok(llvm_ir) => llvm_ir,
                 Err(imported @ hare_llvm::LlvmError::ImportedApplication(_)) => {
