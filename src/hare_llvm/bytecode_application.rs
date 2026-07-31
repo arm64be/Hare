@@ -82,6 +82,7 @@ enum RegisterValue {
     BuiltinScope(Builtin),
     Builtin(Builtin),
     Enumerator { heap_id: u32, keys: Vec<Box<str>> },
+    Arguments(Vec<Self>),
     ExceptionObject(Box<Self>),
     Error { kind: u32, message: Box<str> },
     Object(u32),
@@ -153,10 +154,11 @@ pub fn compile_imported_scalar_application(
         .functions
         .first()
         .ok_or_else(|| imported_error("owned visitor unit has no root function"))?;
+    let call_arities = infer_static_call_arities(unit)?;
 
     let mut functions = BTreeMap::new();
     for function in unit.functions.iter().skip(1) {
-        let body = lower_function(unit, function, &functions)?;
+        let body = lower_function(unit, function, &functions, &call_arities)?;
         if !body.writes.is_empty() {
             return Err(imported_error(format!(
                 "f{} performs output inside a callable function",
@@ -170,14 +172,14 @@ pub fn compile_imported_scalar_application(
             function.id,
             ScalarFunction {
                 id: function.id,
-                parameter_count: function.num_parameters.saturating_sub(1) as usize,
+                parameter_count: static_parameter_count(function, &call_arities),
                 result_kind,
                 result,
             },
         );
     }
 
-    let root_body = lower_function(unit, root, &functions)?;
+    let root_body = lower_function(unit, root, &functions, &call_arities)?;
     if root_body.writes.is_empty() {
         return Err(imported_error(
             "root function performs no admitted native output",
@@ -191,10 +193,79 @@ pub fn compile_imported_scalar_application(
     emit_application(target, &functions, &writes)
 }
 
+fn infer_static_call_arities(
+    unit: &OwnedVisitorUnit,
+) -> Result<BTreeMap<FunctionId, usize>, LlvmError> {
+    let mut arities = BTreeMap::<FunctionId, usize>::new();
+    for function in &unit.functions {
+        let mut function_registers = BTreeMap::<i64, FunctionId>::new();
+        for instruction in &function.instructions {
+            let Some(descriptor) = hare_frontend::descriptor(instruction.opcode_id) else {
+                continue;
+            };
+            match descriptor.opcode {
+                "op_new_func" => {
+                    let child = child_function(
+                        unit,
+                        function.id,
+                        descriptor.opcode,
+                        unsigned_operand(instruction, "functionDecl")?,
+                    )?;
+                    function_registers.insert(signed_operand(instruction, "dst")?, child);
+                }
+                "op_new_func_exp" => {
+                    let child = child_function(
+                        unit,
+                        function.id,
+                        descriptor.opcode,
+                        unsigned_operand(instruction, "functionDecl")?,
+                    )?;
+                    function_registers.insert(signed_operand(instruction, "dst")?, child);
+                }
+                "op_mov" => {
+                    let destination = signed_operand(instruction, "dst")?;
+                    let source = signed_operand(instruction, "src")?;
+                    if let Some(child) = function_registers.get(&source).copied() {
+                        function_registers.insert(destination, child);
+                    } else {
+                        function_registers.remove(&destination);
+                    }
+                }
+                "op_call" | "op_tail_call" => {
+                    let callee = signed_operand(instruction, "callee")?;
+                    let Some(child) = function_registers.get(&callee).copied() else {
+                        continue;
+                    };
+                    let count = usize::try_from(unsigned_operand(instruction, "argc")?)
+                        .map_err(|_| imported_error("call argument count exceeds usize"))?
+                        .checked_sub(1)
+                        .ok_or_else(|| imported_error("JSC call omits its this argument"))?;
+                    arities
+                        .entry(child)
+                        .and_modify(|arity| *arity = (*arity).max(count))
+                        .or_insert(count);
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(arities)
+}
+
+fn static_parameter_count(
+    function: &VisitorFunction,
+    call_arities: &BTreeMap<FunctionId, usize>,
+) -> usize {
+    usize::try_from(function.num_parameters.saturating_sub(1))
+        .unwrap_or(usize::MAX)
+        .max(call_arities.get(&function.id).copied().unwrap_or(0))
+}
+
 fn lower_function(
     unit: &OwnedVisitorUnit,
     function: &VisitorFunction,
     functions: &BTreeMap<FunctionId, ScalarFunction>,
+    call_arities: &BTreeMap<FunctionId, usize>,
 ) -> Result<LoweredBody, LlvmError> {
     let mut registers = BTreeMap::new();
     registers.insert(function.scope_register as i64, RegisterValue::Opaque);
@@ -203,13 +274,16 @@ fn lower_function(
         function.call_frame_this_argument_register as i64,
         RegisterValue::Undefined,
     );
-    let parameter_count = function.num_parameters.saturating_sub(1) as usize;
+    let parameter_count = static_parameter_count(function, call_arities);
     for index in 0..parameter_count {
         registers.insert(
             i64::from(function.call_frame_first_argument_register) + index as i64,
             RegisterValue::Scalar(ScalarExpression::Parameter(index)),
         );
     }
+    let parameter_values = (0..parameter_count)
+        .map(|index| RegisterValue::Scalar(ScalarExpression::Parameter(index)))
+        .collect::<Vec<_>>();
 
     let mut writes = Vec::new();
     let mut result = None;
@@ -426,6 +500,60 @@ fn lower_function(
                 );
                 registers.insert(destination, RegisterValue::Object(id));
             }
+            "op_create_direct_arguments"
+            | "op_create_scoped_arguments"
+            | "op_create_cloned_arguments" => {
+                let destination = signed_operand(instruction, "dst")?;
+                registers.insert(
+                    destination,
+                    RegisterValue::Arguments(parameter_values.clone()),
+                );
+            }
+            "op_argument_count" => {
+                let destination = signed_operand(instruction, "dst")?;
+                registers.insert(
+                    destination,
+                    RegisterValue::Scalar(ScalarExpression::Integer(
+                        i64::try_from(parameter_values.len())
+                            .map_err(|_| imported_error("argument count exceeds i64"))?,
+                    )),
+                );
+            }
+            "op_get_argument" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let index = signed_operand(instruction, "index")?
+                    .checked_sub(1)
+                    .ok_or_else(|| unsupported(function, instruction, descriptor.opcode))?;
+                let index = usize::try_from(index)
+                    .map_err(|_| unsupported(function, instruction, descriptor.opcode))?;
+                registers.insert(
+                    destination,
+                    parameter_values
+                        .get(index)
+                        .cloned()
+                        .unwrap_or(RegisterValue::Undefined),
+                );
+            }
+            "op_get_from_arguments" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let arguments = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "arguments")?,
+                )?;
+                let RegisterValue::Arguments(values) = arguments else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let index = usize::try_from(unsigned_operand(instruction, "index")?)
+                    .map_err(|_| imported_error("argument index exceeds usize"))?;
+                registers.insert(
+                    destination,
+                    values
+                        .get(index)
+                        .cloned()
+                        .unwrap_or(RegisterValue::Undefined),
+                );
+            }
             "op_new_array" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let first = signed_operand(instruction, "argv")?;
@@ -474,6 +602,37 @@ fn lower_function(
                     id,
                     StaticHeapEntry::Array {
                         elements: BTreeMap::new(),
+                        properties: BTreeMap::new(),
+                        property_order: Vec::new(),
+                        length,
+                    },
+                );
+                registers.insert(destination, RegisterValue::Array(id));
+            }
+            "op_create_rest" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let skip =
+                    usize::try_from(unsigned_operand(instruction, "numParametersToSkip")?)
+                        .map_err(|_| imported_error("rest parameter skip count exceeds usize"))?;
+                let values = parameter_values
+                    .get(skip..)
+                    .ok_or_else(|| unsupported(function, instruction, descriptor.opcode))?;
+                let length = u32::try_from(values.len())
+                    .map_err(|_| imported_error("rest parameter count exceeds u32"))?;
+                let elements = values
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .map(|(index, value)| (index as u32, value))
+                    .collect();
+                let id = next_heap_id;
+                next_heap_id = next_heap_id
+                    .checked_add(1)
+                    .ok_or_else(|| imported_error("static heap id overflow"))?;
+                heap.insert(
+                    id,
+                    StaticHeapEntry::Array {
+                        elements,
                         properties: BTreeMap::new(),
                         property_order: Vec::new(),
                         length,
@@ -631,6 +790,8 @@ fn lower_function(
                     },
                     RegisterValue::String(value) => i64::try_from(value.encode_utf16().count())
                         .map_err(|_| imported_error("string length exceeds i64"))?,
+                    RegisterValue::Arguments(values) => i64::try_from(values.len())
+                        .map_err(|_| imported_error("argument count exceeds i64"))?,
                     _ => return Err(unsupported(function, instruction, descriptor.opcode)),
                 };
                 registers.insert(
@@ -1241,6 +1402,7 @@ fn known_truthiness(
         | RegisterValue::ConsoleObject
         | RegisterValue::ConsoleLog
         | RegisterValue::Builtin(_)
+        | RegisterValue::Arguments(_)
         | RegisterValue::ExceptionObject(_)
         | RegisterValue::Error { .. } => Some(true),
         _ => None,
@@ -1458,6 +1620,7 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
             | RegisterValue::ConsoleObject
             | RegisterValue::ConsoleLog
             | RegisterValue::Builtin(_)
+            | RegisterValue::Arguments(_)
             | RegisterValue::ExceptionObject(_)
             | RegisterValue::Error { .. }
             | RegisterValue::Undefined
@@ -1486,6 +1649,7 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
             RegisterValue::Null
                 | RegisterValue::Object(_)
                 | RegisterValue::Array(_)
+                | RegisterValue::Arguments(_)
                 | RegisterValue::ConsoleObject
                 | RegisterValue::ExceptionObject(_)
                 | RegisterValue::Error { .. }
@@ -1516,6 +1680,7 @@ fn known_unary_predicate(opcode: &str, value: &RegisterValue) -> Option<bool> {
             RegisterValue::Function(_)
                 | RegisterValue::Object(_)
                 | RegisterValue::Array(_)
+                | RegisterValue::Arguments(_)
                 | RegisterValue::ConsoleObject
                 | RegisterValue::ConsoleLog
                 | RegisterValue::Builtin(_)
@@ -1551,6 +1716,7 @@ fn known_typeof(value: &RegisterValue) -> Option<&'static str> {
         RegisterValue::Null
         | RegisterValue::Object(_)
         | RegisterValue::Array(_)
+        | RegisterValue::Arguments(_)
         | RegisterValue::ConsoleObject
         | RegisterValue::ExceptionObject(_)
         | RegisterValue::Error { .. } => Some("object"),
@@ -1854,6 +2020,24 @@ fn static_get_property(
     base: &RegisterValue,
     key: StaticPropertyKey,
 ) -> Result<RegisterValue, LlvmError> {
+    if let RegisterValue::Arguments(values) = base {
+        return match key {
+            StaticPropertyKey::Index(index) => Ok(values
+                .get(index as usize)
+                .cloned()
+                .unwrap_or(RegisterValue::Undefined)),
+            StaticPropertyKey::Name(name) if name.as_ref() == "length" => {
+                Ok(RegisterValue::Scalar(ScalarExpression::Integer(
+                    i64::try_from(values.len())
+                        .map_err(|_| imported_error("argument count exceeds i64"))?,
+                )))
+            }
+            StaticPropertyKey::Name(name) => canonical_array_index(&name)
+                .and_then(|index| values.get(index as usize).cloned())
+                .map(Ok)
+                .unwrap_or(Ok(RegisterValue::Undefined)),
+        };
+    }
     if let RegisterValue::Error { kind, message } = base {
         return match key {
             StaticPropertyKey::Name(name) if name.as_ref() == "name" => {

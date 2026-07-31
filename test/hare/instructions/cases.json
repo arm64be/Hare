@@ -586,6 +586,90 @@
     "source": "let h026Caught = 0; try { throw 41; } catch (error) { h026Caught = error + 1; } console.log(h026Caught);"
   },
   {
+    "id": "function.declaration-call",
+    "family": "function_async_scope",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_new_func",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call",
+      "op_call_ignore_result",
+      "op_add",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "function h026Declared(left, right) { return left + right; } console.log(h026Declared(20, 22));"
+  },
+  {
+    "id": "function.cloned-arguments",
+    "family": "function_async_scope",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_new_func",
+      "op_create_cloned_arguments",
+      "op_get_length",
+      "op_get_by_val",
+      "op_add",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call",
+      "op_call_ignore_result",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "function h026Arguments(value) { return arguments.length + arguments[0]; } console.log(h026Arguments(41));"
+  },
+  {
+    "id": "function.rest-arguments",
+    "family": "function_async_scope",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_new_func",
+      "op_create_rest",
+      "op_get_length",
+      "op_add",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call",
+      "op_call_ignore_result",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "function h026Rest(first, ...rest) { return first + rest.length; } console.log(h026Rest(40, 1, 1));"
+  },
+  {
+    "id": "function.argument-count",
+    "family": "function_async_scope",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_new_func",
+      "op_argument_count",
+      "op_create_cloned_arguments",
+      "op_get_by_val",
+      "op_add",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call",
+      "op_call_ignore_result",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "function h026ArgumentCount() { return arguments.length; } function h026FirstArgument() { return arguments[0]; } console.log(h026ArgumentCount(1, 2) + h026FirstArgument(40));"
+  },
+  {
     "id": "locals.scalar-binding",
     "family": "locals",
     "lowering": "imported",
