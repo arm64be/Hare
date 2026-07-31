@@ -196,6 +196,17 @@ fn render_constant_value(value: &VisitorConstantValue) -> String {
         VisitorConstantValue::RegExp { pattern, flags } => {
             format!("regexp:{} flags=0x{flags:08x}", render_source_text(pattern))
         }
+        VisitorConstantValue::ImmutableArray {
+            elements,
+            indexing_type,
+        } => format!(
+            "immutable-array:indexing=0x{indexing_type:08x} [{}]",
+            elements
+                .iter()
+                .map(render_constant_value)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
         VisitorConstantValue::LinkTimeConstant(name) => {
             format!("link-time-constant:{}", escaped(name))
         }

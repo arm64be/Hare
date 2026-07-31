@@ -149,6 +149,8 @@ test.skipIf(!isLinux)(
       true
       true
       42
+      hare
+      42
       7
       3
       7

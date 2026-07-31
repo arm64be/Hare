@@ -175,6 +175,10 @@ pub enum VisitorConstantValue {
         pattern: SourceText,
         flags: u32,
     },
+    ImmutableArray {
+        elements: Vec<VisitorConstantValue>,
+        indexing_type: u32,
+    },
     /// Stable symbolic identity for a pinned JSC `LinkTimeConstant`.
     LinkTimeConstant(Box<str>),
     /// Address-free marker for a declarative cell whose fields have not yet

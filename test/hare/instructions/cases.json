@@ -449,6 +449,25 @@
     "source": "console.log((function (value) { const array = [value, 2]; array[1] = 3; return array[0] + array[1] + array.length; })(35)); console.log((function (value) { const array = [value]; return 0 in array; })(1)); console.log((function (value) { const array = [value]; return delete array[0]; })(1));"
   },
   {
+    "id": "object.immutable-array-literal",
+    "family": "object_property",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_new_array_buffer",
+      "op_get_by_val",
+      "op_add",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call_ignore_result",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "const h026ImmutableArray = [40, 2, \"hare\"]; console.log(h026ImmutableArray[0] + h026ImmutableArray[1]); console.log(h026ImmutableArray[2]);"
+  },
+  {
     "id": "object.computed-data-property",
     "family": "object_property",
     "lowering": "imported",

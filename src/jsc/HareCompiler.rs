@@ -40,6 +40,14 @@ struct BridgeContext {
     builder: Option<ImportBuilder>,
     visitor_error: Option<ImportError>,
     parser_diagnostic: Option<ParserDiagnostic>,
+    pending_array_constant: Option<PendingArrayConstant>,
+}
+
+struct PendingArrayConstant {
+    index: u32,
+    source_representation: ConstantSourceRepresentation,
+    indexing_type: u32,
+    elements: Vec<Option<VisitorConstantValue>>,
 }
 
 impl BridgeContext {
@@ -331,6 +339,20 @@ unsafe fn copy_source_text(
     }
 }
 
+fn scalar_constant_value(kind: u32, payload: u64) -> Result<VisitorConstantValue, ImportError> {
+    match kind {
+        0 => Ok(VisitorConstantValue::Empty),
+        1 => Ok(VisitorConstantValue::Undefined),
+        2 => Ok(VisitorConstantValue::Null),
+        3 => Ok(VisitorConstantValue::Boolean(payload != 0)),
+        4 => Ok(VisitorConstantValue::Int32(payload as u32 as i32)),
+        5 => Ok(VisitorConstantValue::Float64Bits(payload)),
+        _ => Err(ImportError::VisitorRejected(
+            "invalid scalar constant kind".into(),
+        )),
+    }
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Hare__visitorConstantScalar(
     context: *mut c_void,
@@ -341,19 +363,7 @@ extern "C" fn Bun__Hare__visitorConstantScalar(
 ) -> u32 {
     callback_boundary(context, |context| {
         let source_representation = constant_source_representation(source_representation)?;
-        let value = match kind {
-            0 => VisitorConstantValue::Empty,
-            1 => VisitorConstantValue::Undefined,
-            2 => VisitorConstantValue::Null,
-            3 => VisitorConstantValue::Boolean(payload != 0),
-            4 => VisitorConstantValue::Int32(payload as u32 as i32),
-            5 => VisitorConstantValue::Float64Bits(payload),
-            _ => {
-                return Err(ImportError::VisitorRejected(
-                    "invalid scalar constant kind".into(),
-                ));
-            }
-        };
+        let value = scalar_constant_value(kind, payload)?;
         context
             .builder
             .as_mut()
@@ -431,6 +441,115 @@ extern "C" fn Bun__Hare__visitorConstantText(
                 VisitorConstant {
                     value,
                     source_representation,
+                },
+            )
+    })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorBeginArrayConstant(
+    context: *mut c_void,
+    index: u32,
+    source_representation: u32,
+    indexing_type: u32,
+    length: u32,
+) -> u32 {
+    callback_boundary(context, |context| {
+        if context.pending_array_constant.is_some() {
+            return Err(ImportError::VisitorRejected(
+                "nested array constant import".into(),
+            ));
+        }
+        let length = usize::try_from(length)
+            .map_err(|_| ImportError::VisitorRejected("array constant length overflow".into()))?;
+        context.pending_array_constant = Some(PendingArrayConstant {
+            index,
+            source_representation: constant_source_representation(source_representation)?,
+            indexing_type,
+            elements: vec![None; length],
+        });
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorArrayConstantScalar(
+    context: *mut c_void,
+    element_index: u32,
+    kind: u32,
+    payload: u64,
+) -> u32 {
+    callback_boundary(context, |context| {
+        let value = scalar_constant_value(kind, payload)?;
+        let pending = context.pending_array_constant.as_mut().ok_or_else(|| {
+            ImportError::VisitorRejected("array element without pending constant".into())
+        })?;
+        let element = pending
+            .elements
+            .get_mut(element_index as usize)
+            .ok_or_else(|| ImportError::VisitorRejected("array element index overflow".into()))?;
+        if element.replace(value).is_some() {
+            return Err(ImportError::VisitorRejected(
+                "duplicate array constant element".into(),
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorArrayConstantText(
+    context: *mut c_void,
+    element_index: u32,
+    data: *const c_void,
+    len: usize,
+    is_latin1: u32,
+) -> u32 {
+    callback_boundary(context, |context| {
+        // SAFETY: C++ keeps the string span alive for this synchronous callback.
+        let text = unsafe { copy_source_text(data, len, is_latin1)? };
+        let pending = context.pending_array_constant.as_mut().ok_or_else(|| {
+            ImportError::VisitorRejected("array element without pending constant".into())
+        })?;
+        let element = pending
+            .elements
+            .get_mut(element_index as usize)
+            .ok_or_else(|| ImportError::VisitorRejected("array element index overflow".into()))?;
+        if element
+            .replace(VisitorConstantValue::String(text))
+            .is_some()
+        {
+            return Err(ImportError::VisitorRejected(
+                "duplicate array constant element".into(),
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Hare__visitorEndArrayConstant(context: *mut c_void) -> u32 {
+    callback_boundary(context, |context| {
+        let pending = context.pending_array_constant.take().ok_or_else(|| {
+            ImportError::VisitorRejected("array end without pending constant".into())
+        })?;
+        let elements = pending
+            .elements
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| ImportError::VisitorRejected("incomplete array constant".into()))?;
+        context
+            .builder
+            .as_mut()
+            .ok_or_else(|| ImportError::VisitorRejected("missing import builder".into()))?
+            .constant(
+                pending.index,
+                VisitorConstant {
+                    value: VisitorConstantValue::ImmutableArray {
+                        elements,
+                        indexing_type: pending.indexing_type,
+                    },
+                    source_representation: pending.source_representation,
                 },
             )
     })
@@ -626,6 +745,7 @@ pub fn import_structural_for_hare(
         builder: Some(ImportBuilder::new(input_kind, source_record)),
         visitor_error: None,
         parser_diagnostic: None,
+        pending_array_constant: None,
     };
     let context_pointer = core::ptr::from_mut(&mut context).cast::<c_void>();
     // SAFETY: all input pointers remain live for the call. C++ calls back only
@@ -655,6 +775,11 @@ pub fn import_structural_for_hare(
     };
     if let Some(error) = context.visitor_error {
         return Err(HareImportError::Visitor(error));
+    }
+    if context.pending_array_constant.is_some() {
+        return Err(HareImportError::Visitor(ImportError::VisitorRejected(
+            "unfinished array constant import".into(),
+        )));
     }
     match result.status {
         0 => {

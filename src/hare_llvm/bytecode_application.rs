@@ -96,6 +96,7 @@ enum RegisterValue {
         flags: u32,
         identity: u32,
     },
+    ArrayTemplate(Vec<Self>),
     Environment(StaticEnvironmentRef),
     ConsoleScope,
     NaNScope,
@@ -642,6 +643,42 @@ fn lower_function(
                         .cloned()
                         .unwrap_or(RegisterValue::Undefined),
                 );
+            }
+            "op_new_array_buffer" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let template = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "immutableButterfly")?,
+                )?;
+                let RegisterValue::ArrayTemplate(values) = template else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let length = u32::try_from(values.len())
+                    .map_err(|_| imported_error("immutable array length exceeds u32"))?;
+                let elements = values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        u32::try_from(index)
+                            .map(|index| (index, value))
+                            .map_err(|_| imported_error("immutable array index exceeds u32"))
+                    })
+                    .collect::<Result<BTreeMap<_, _>, _>>()?;
+                let id = next_heap_id;
+                next_heap_id = next_heap_id
+                    .checked_add(1)
+                    .ok_or_else(|| imported_error("static heap id overflow"))?;
+                heap.insert(
+                    id,
+                    StaticHeapEntry::Array {
+                        elements,
+                        properties: BTreeMap::new(),
+                        property_order: Vec::new(),
+                        length,
+                    },
+                );
+                registers.insert(destination, RegisterValue::Array(id));
             }
             "op_new_array" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -1801,57 +1838,70 @@ fn read_register(
                 function.id.0
             ))
         })?;
-        return Ok(match &constant.value {
-            VisitorConstantValue::Int32(value) => {
-                RegisterValue::Scalar(ScalarExpression::Integer(i64::from(*value)))
-            }
-            VisitorConstantValue::Float64Bits(bits) => {
-                let value = f64::from_bits(*bits);
-                if value.is_nan() {
-                    RegisterValue::NaN
-                } else if value == f64::INFINITY {
-                    RegisterValue::PositiveInfinity
-                } else if value == f64::NEG_INFINITY {
-                    RegisterValue::NegativeInfinity
-                } else if value == 0.0 && value.is_sign_negative() {
-                    RegisterValue::NegativeZero
-                } else if value.fract() == 0.0 && value.abs() <= MAX_SAFE_INTEGER as f64 {
-                    RegisterValue::Scalar(ScalarExpression::Integer(value as i64))
-                } else {
-                    return Err(imported_error(format!(
-                        "f{} uses a non-integral scalar constant",
-                        function.id.0
-                    )));
-                }
-            }
-            VisitorConstantValue::Undefined => RegisterValue::Undefined,
-            VisitorConstantValue::Null => RegisterValue::Null,
-            VisitorConstantValue::Boolean(value) => RegisterValue::Boolean(*value),
-            VisitorConstantValue::String(value) => {
-                RegisterValue::String(source_text_to_string(value)?.into_boxed_str())
-            }
-            VisitorConstantValue::RegExp { pattern, flags } => RegisterValue::RegExpTemplate {
-                pattern: pattern.clone(),
-                flags: *flags,
-            },
-            VisitorConstantValue::LinkTimeConstant(name) => match name.as_ref() {
-                "Array" => RegisterValue::Builtin(Builtin::Array),
-                "emptyPropertyNameEnumerator" => {
-                    RegisterValue::Builtin(Builtin::EmptyPropertyNameEnumerator)
-                }
-                "Object" => RegisterValue::Builtin(Builtin::Object),
-                "sentinelString" => RegisterValue::Builtin(Builtin::SentinelString),
-                _ => RegisterValue::Opaque,
-            },
-            VisitorConstantValue::Empty => RegisterValue::Empty,
-            VisitorConstantValue::UnimplementedCell(_) => RegisterValue::Opaque,
-        });
+        return register_constant_value(function, &constant.value);
     }
     registers.get(&register).cloned().ok_or_else(|| {
         imported_error(format!(
             "f{} reads undefined virtual register {register}",
             function.id.0
         ))
+    })
+}
+
+fn register_constant_value(
+    function: &VisitorFunction,
+    constant: &VisitorConstantValue,
+) -> Result<RegisterValue, LlvmError> {
+    Ok(match constant {
+        VisitorConstantValue::Int32(value) => {
+            RegisterValue::Scalar(ScalarExpression::Integer(i64::from(*value)))
+        }
+        VisitorConstantValue::Float64Bits(bits) => {
+            let value = f64::from_bits(*bits);
+            if value.is_nan() {
+                RegisterValue::NaN
+            } else if value == f64::INFINITY {
+                RegisterValue::PositiveInfinity
+            } else if value == f64::NEG_INFINITY {
+                RegisterValue::NegativeInfinity
+            } else if value == 0.0 && value.is_sign_negative() {
+                RegisterValue::NegativeZero
+            } else if value.fract() == 0.0 && value.abs() <= MAX_SAFE_INTEGER as f64 {
+                RegisterValue::Scalar(ScalarExpression::Integer(value as i64))
+            } else {
+                return Err(imported_error(format!(
+                    "f{} uses a non-integral scalar constant",
+                    function.id.0
+                )));
+            }
+        }
+        VisitorConstantValue::Undefined => RegisterValue::Undefined,
+        VisitorConstantValue::Null => RegisterValue::Null,
+        VisitorConstantValue::Boolean(value) => RegisterValue::Boolean(*value),
+        VisitorConstantValue::String(value) => {
+            RegisterValue::String(source_text_to_string(value)?.into_boxed_str())
+        }
+        VisitorConstantValue::RegExp { pattern, flags } => RegisterValue::RegExpTemplate {
+            pattern: pattern.clone(),
+            flags: *flags,
+        },
+        VisitorConstantValue::ImmutableArray { elements, .. } => RegisterValue::ArrayTemplate(
+            elements
+                .iter()
+                .map(|value| register_constant_value(function, value))
+                .collect::<Result<_, _>>()?,
+        ),
+        VisitorConstantValue::LinkTimeConstant(name) => match name.as_ref() {
+            "Array" => RegisterValue::Builtin(Builtin::Array),
+            "emptyPropertyNameEnumerator" => {
+                RegisterValue::Builtin(Builtin::EmptyPropertyNameEnumerator)
+            }
+            "Object" => RegisterValue::Builtin(Builtin::Object),
+            "sentinelString" => RegisterValue::Builtin(Builtin::SentinelString),
+            _ => RegisterValue::Opaque,
+        },
+        VisitorConstantValue::Empty => RegisterValue::Empty,
+        VisitorConstantValue::UnimplementedCell(_) => RegisterValue::Opaque,
     })
 }
 

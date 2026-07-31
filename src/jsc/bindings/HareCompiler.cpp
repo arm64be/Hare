@@ -33,6 +33,7 @@ struct JSGeneratorTraits {
 #include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/InstructionStream.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/JSCellButterfly.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ParserError.h>
 #include <JavaScriptCore/RegExp.h>
@@ -60,6 +61,13 @@ extern "C" uint32_t Bun__Hare__visitorConstantScalar(
     void*, uint32_t, uint32_t, uint32_t, uint64_t);
 extern "C" uint32_t Bun__Hare__visitorConstantText(
     void*, uint32_t, uint32_t, uint32_t, const void*, size_t, uint32_t);
+extern "C" uint32_t Bun__Hare__visitorBeginArrayConstant(
+    void*, uint32_t, uint32_t, uint32_t, uint32_t);
+extern "C" uint32_t Bun__Hare__visitorArrayConstantScalar(
+    void*, uint32_t, uint32_t, uint64_t);
+extern "C" uint32_t Bun__Hare__visitorArrayConstantText(
+    void*, uint32_t, const void*, size_t, uint32_t);
+extern "C" uint32_t Bun__Hare__visitorEndArrayConstant(void*);
 extern "C" uint32_t Bun__Hare__visitorRegExpConstant(
     void*, uint32_t, uint32_t, const void*, size_t, uint32_t, uint32_t);
 extern "C" uint32_t Bun__Hare__visitorIdentifier(
@@ -217,6 +225,63 @@ static bool emitCopiedText(
         static_cast<uint32_t>(sourceRepresentation), span.data(), span.size(), 0);
 }
 
+static bool emitArrayConstantElement(
+    void* visitorContext, uint32_t index, JSC::JSValue value)
+{
+    uint32_t kind;
+    uint64_t payload = 0;
+    if (value.isEmpty())
+        kind = 0;
+    else if (value.isUndefined())
+        kind = 1;
+    else if (value.isNull())
+        kind = 2;
+    else if (value.isBoolean()) {
+        kind = 3;
+        payload = value.asBoolean();
+    } else if (value.isInt32()) {
+        kind = 4;
+        payload = static_cast<uint64_t>(static_cast<int64_t>(value.asInt32()));
+    } else if (value.isDouble()) {
+        kind = 5;
+        payload = std::bit_cast<uint64_t>(value.asNumber());
+    } else if (value.isString()) {
+        auto holder = JSC::asString(value)->tryGetValue();
+        const WTF::String& string = holder.data;
+        if (string.isNull())
+            return false;
+        if (string.is8Bit()) {
+            auto span = string.span8();
+            return Bun__Hare__visitorArrayConstantText(
+                visitorContext, index, span.data(), span.size(), 1);
+        }
+        auto span = string.span16();
+        return Bun__Hare__visitorArrayConstantText(
+            visitorContext, index, span.data(), span.size(), 0);
+    } else
+        return false;
+    return Bun__Hare__visitorArrayConstantScalar(
+        visitorContext, index, kind, payload);
+}
+
+static bool emitArrayConstant(
+    void* visitorContext, uint32_t index,
+    JSC::SourceCodeRepresentation sourceRepresentation,
+    JSC::JSCellButterfly& array)
+{
+    uint32_t length = array.length();
+    if (!Bun__Hare__visitorBeginArrayConstant(
+            visitorContext, index, static_cast<uint32_t>(sourceRepresentation),
+            static_cast<uint32_t>(array.indexingTypeAndMisc()), length))
+        return false;
+    for (uint32_t elementIndex = 0; elementIndex < length; ++elementIndex) {
+        if (!emitArrayConstantElement(
+                visitorContext, elementIndex, array.get(elementIndex)))
+            return false;
+    }
+    return Bun__Hare__visitorEndArrayConstant(visitorContext);
+}
+
 static bool emitLinkTimeConstant(
     void* visitorContext, uint32_t index,
     JSC::SourceCodeRepresentation sourceRepresentation, int32_t rawValue)
@@ -296,6 +361,12 @@ static bool visitConstantsAndIdentifiers(
             if (string.isNull()
                 || !emitCopiedText(
                     visitorContext, index, 6, sourceRepresentation, string))
+                return false;
+            ++index;
+            continue;
+        } else if (auto* array = dynamicDowncast<JSC::JSCellButterfly>(value)) {
+            if (!emitArrayConstant(
+                    visitorContext, index, sourceRepresentation, *array))
                 return false;
             ++index;
             continue;
