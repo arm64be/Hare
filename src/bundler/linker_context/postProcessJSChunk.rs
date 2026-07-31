@@ -97,6 +97,7 @@ pub(crate) fn post_process_js_chunk(
 
     // Create ModuleInfo for ESM bytecode in --compile builds
     let generate_module_info = c.options.generate_bytecode_cache
+        && !c.options.hare
         && c.options.output_format == options::OutputFormat::Esm
         && c.options.compile;
     let loader =
@@ -465,12 +466,15 @@ pub(crate) fn post_process_js_chunk(
     // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
     let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
     if is_bun {
-        if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
+        if c.options.generate_bytecode_cache
+            && !c.options.hare
+            && output_format == options::OutputFormat::Cjs
+        {
             const INPUT: &[u8] =
                 b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
             j.push_static(INPUT);
             line_offset.advance(INPUT);
-        } else if c.options.generate_bytecode_cache {
+        } else if c.options.generate_bytecode_cache && !c.options.hare {
             j.push_static(b"// @bun @bytecode\n");
             line_offset.advance(b"// @bun @bytecode\n");
         } else if output_format == options::OutputFormat::Cjs {

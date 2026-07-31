@@ -1,9 +1,12 @@
 #include "root.h"
 
+#include "HareApplication.h"
 #include "HareCompiler.h"
 #include "ZigSourceProvider.h"
 #include "helpers.h"
 
+#include <cstdio>
+#include <limits>
 #include <memory>
 #include <JavaScriptCore/Instruction.h>
 
@@ -509,4 +512,41 @@ extern "C" void Bun__Hare__importProgramFromSource(
             return JSC::sourceCodeKeyForSerializedProgram(vm, source);
         },
         Bun::Hare::importProgramForHare);
+}
+
+#if !defined(_WIN32)
+extern "C" int32_t Bun__Hare__nativeApplicationEntry(
+    int32_t argc, const char* const* argv) noexcept __attribute__((weak));
+#endif
+
+extern "C" int32_t Bun__Hare__runNativeApplication(
+    int32_t argc, const char* const* argv) noexcept
+{
+#if defined(_WIN32)
+    (void)argc;
+    (void)argv;
+    return Bun__Hare__nativeApplicationMissing;
+#else
+    if (!Bun__Hare__nativeApplicationEntry)
+        return Bun__Hare__nativeApplicationMissing;
+    return Bun__Hare__nativeApplicationEntry(argc, argv);
+#endif
+}
+
+extern "C" int64_t Bun__Hare__writeStdout(
+    const uint8_t* bytes, size_t length) noexcept
+{
+    if ((!bytes && length) || length > static_cast<size_t>(std::numeric_limits<int64_t>::max()))
+        return -1;
+
+    size_t written = 0;
+    while (written < length) {
+        size_t count = std::fwrite(bytes + written, 1, length - written, stdout);
+        if (!count)
+            return -1;
+        written += count;
+    }
+    if (std::fflush(stdout))
+        return -1;
+    return static_cast<int64_t>(written);
 }

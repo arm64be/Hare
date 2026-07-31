@@ -880,6 +880,37 @@ impl BuildCommand {
                     }
                 }
 
+                let hare_linked_template = if ctx.bundler_options.hare {
+                    if is_cross_compile {
+                        Output::print_errorln(format_args!(
+                            "Hare native application linking currently requires the host target"
+                        ));
+                        Global::exit(1);
+                    }
+                    if ctx.bundler_options.compile_executable_path.is_some() {
+                        Output::print_errorln(format_args!(
+                            "--hare cannot use --compile-executable-path until that template exposes a matching Hare link manifest"
+                        ));
+                        Global::exit(1);
+                    }
+                    match super::hare_native_link::link_application(output_files) {
+                        Ok(template) => Some(template),
+                        Err(error) => {
+                            Output::print_errorln(format_args!(
+                                "failed to link Hare native application: {error}"
+                            ));
+                            Global::exit(1);
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                let executable_template = hare_linked_template
+                    .as_ref()
+                    .map(|template| template.executable_path())
+                    .or(ctx.bundler_options.compile_executable_path.as_deref());
+
                 let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
                     compile_target,
                     output_files,
@@ -894,7 +925,7 @@ impl BuildCommand {
                         .compile_exec_argv
                         .as_deref()
                         .unwrap_or(b""),
-                    ctx.bundler_options.compile_executable_path.as_deref(),
+                    executable_template,
                     {
                         use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
                         let mut flags = Flags::default();
@@ -909,6 +940,9 @@ impl BuildCommand {
                         }
                         if !ctx.bundler_options.compile_autoload_package_json {
                             flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
+                        }
+                        if ctx.bundler_options.hare {
+                            flags |= Flags::HARE_NATIVE;
                         }
                         flags
                     },
@@ -1089,6 +1123,7 @@ impl BuildCommand {
                         options::OutputKind::Sourcemap => "<d>",
                         options::OutputKind::Bytecode => "<d>",
                         options::OutputKind::ModuleInfo => "<d>",
+                        options::OutputKind::HareLlvmIr => "<d>",
                         options::OutputKind::MetafileJson
                         | options::OutputKind::MetafileMarkdown => "<green>",
                     }))?;
@@ -1134,6 +1169,7 @@ impl BuildCommand {
                         options::OutputKind::Sourcemap => "source map",
                         options::OutputKind::Bytecode => "bytecode",
                         options::OutputKind::ModuleInfo => "module info",
+                        options::OutputKind::HareLlvmIr => "Hare LLVM IR",
                         options::OutputKind::MetafileJson => "metafile json",
                         options::OutputKind::MetafileMarkdown => "metafile markdown",
                     }

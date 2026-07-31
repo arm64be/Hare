@@ -1413,6 +1413,17 @@ pub mod bv2_impl {
             hare_frontend::validate_imported_unit(unit)
         }
 
+        #[inline]
+        pub(crate) fn lower_hare_application(
+            source: &[u8],
+        ) -> Result<Box<[u8]>, hare_llvm::LlvmError> {
+            let target = hare_llvm::TargetLayout::host()?;
+            Ok(hare_llvm::compile_static_application(source, target)?
+                .emit_llvm_ir()
+                .into_bytes()
+                .into_boxed_slice())
+        }
+
         /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` — the
         /// concrete struct lives in `bun_runtime` (its fields name `Config`/
         /// `Plugin`/`HTMLBundle::Route`). The bundler reads exactly two things

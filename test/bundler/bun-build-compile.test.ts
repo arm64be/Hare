@@ -4,27 +4,93 @@ import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "no
 import { join } from "path";
 
 describe("Bun.build compile", () => {
-  test("--hare reaches the owned native frontend without emitting a standalone fallback", async () => {
-    using dir = tempDir("build-compile-hare-frontend", {
-      "app.js": `function nested(value) { return value + 1; } console.log(nested(41));`,
-    });
+  test.skipIf(!isLinux)(
+    "--hare links and boots native application code without app bytecode",
+    async () => {
+      using dir = tempDir("build-compile-hare-frontend", {
+        "app.js": `function nested(value) { return value + 1; } console.log(nested(41));`,
+      });
 
-    const outfile = join(String(dir), "app");
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--hare", join(String(dir), "app.js"), "--outfile", outfile],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const outfile = join(String(dir), "app");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--hare", join(String(dir), "app.js"), "--outfile", outfile],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toMatch(
-      /Hare frontend imported \d+ owned function\(s\) and validated \d+ semantic instruction\(s\) \(\d+ cache-only excluded\) for \.\/app\.js; native application lowering is not yet converged/,
-    );
-    expect(existsSync(outfile)).toBe(false);
-    expect(exitCode).toBe(1);
-  });
+      expect(buildStderr).not.toContain("error:");
+      expect(existsSync(outfile)).toBe(true);
+      expect(buildExitCode).toBe(0);
+
+      await using run = Bun.spawn({
+        cmd: [outfile],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect(stdout).toBe("42\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+
+      const readAt = (fd: number, offset: number, length: number): Buffer => {
+        const bytes = Buffer.alloc(length);
+        expect(readSync(fd, bytes, 0, length, offset)).toBe(length);
+        return bytes;
+      };
+      const fd = openSync(outfile, "r");
+      try {
+        const elf = readAt(fd, 0, 64);
+        expect(elf.readUInt32BE(0)).toBe(0x7f454c46);
+        const sectionTableOffset = Number(elf.readBigUInt64LE(40));
+        const sectionEntrySize = elf.readUInt16LE(58);
+        const sectionCount = elf.readUInt16LE(60);
+        const namesIndex = elf.readUInt16LE(62);
+        const sectionTable = readAt(fd, sectionTableOffset, sectionEntrySize * sectionCount);
+        const namesHeader = namesIndex * sectionEntrySize;
+        const namesOffset = Number(sectionTable.readBigUInt64LE(namesHeader + 24));
+        const namesLength = Number(sectionTable.readBigUInt64LE(namesHeader + 32));
+        const names = readAt(fd, namesOffset, namesLength);
+        let bunOffset = 0;
+        let bunLength = 0;
+        for (let index = 0; index < sectionCount; index++) {
+          const header = index * sectionEntrySize;
+          const nameOffset = sectionTable.readUInt32LE(header);
+          const nameEnd = names.indexOf(0, nameOffset);
+          if (names.subarray(nameOffset, nameEnd).toString() === ".bun") {
+            bunOffset = Number(sectionTable.readBigUInt64LE(header + 24));
+            bunLength = Number(sectionTable.readBigUInt64LE(header + 32));
+            break;
+          }
+        }
+        expect(bunLength).toBeGreaterThan(8);
+        const section = readAt(fd, bunOffset, bunLength);
+        const graphLength = Number(section.readBigUInt64LE(0));
+        const graph = section.subarray(8, 8 + graphLength);
+        const offsetsSize = 32;
+        const trailerSize = Buffer.byteLength("\n---- Bun! ----\n");
+        const offsets = graph.length - trailerSize - offsetsSize;
+        const modulesOffset = graph.readUInt32LE(offsets + 8);
+        const modulesLength = graph.readUInt32LE(offsets + 12);
+        const moduleSize = 52;
+        expect(modulesLength).toBeGreaterThanOrEqual(moduleSize);
+        expect(modulesLength % moduleSize).toBe(0);
+        for (let module = modulesOffset; module < modulesOffset + modulesLength; module += moduleSize) {
+          expect(graph.readUInt32LE(module + 28)).toBe(0); // bytecode.length
+          expect(graph.readUInt32LE(module + 36)).toBe(0); // module_info.length
+        }
+        expect(graph.readUInt32LE(offsets + 28) & (1 << 4)).toBe(1 << 4); // HARE_NATIVE
+        expect(graph.includes(Buffer.from("Hare native application"))).toBe(false);
+        expect(graph.includes(Buffer.from("@bytecode"))).toBe(false);
+      } finally {
+        closeSync(fd);
+      }
+    },
+    60_000,
+  );
 
   test("compile with current platform target string", async () => {
     using dir = tempDir("build-compile-target", {

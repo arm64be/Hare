@@ -322,6 +322,8 @@ pub mod create_command;
 pub mod exec_command;
 #[path = "fuzzilli_command.rs"]
 pub(crate) mod fuzzilli_command;
+#[path = "hare_native_link.rs"]
+mod hare_native_link;
 #[path = "install_command.rs"]
 pub mod install_command;
 #[path = "repl_command.rs"]
@@ -1330,6 +1332,21 @@ pub mod command {
         // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
         // backing storage is process-static (owned by the executable image).
         let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
+        if graph
+            .flags
+            .contains(bun_standalone_graph::Flags::HARE_NATIVE)
+        {
+            match super::hare_native_link::run_application() {
+                Some(0) => return Ok(()),
+                Some(status) => Global::exit(u32::try_from(status).unwrap_or(1)),
+                None => {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r><d>:<r> Hare executable is missing its native application entry"
+                    );
+                    Global::exit(1);
+                }
+            }
+        }
         let offset_for_passthrough: usize;
 
         let ctx: &mut ContextData = 'brk: {

@@ -128,6 +128,7 @@ impl OutputFileList {
 
         // module_info is generated for ESM bytecode in --compile builds
         let module_info_count: usize = if c.options.generate_bytecode_cache
+            && !c.options.hare
             && c.options.output_format == Format::Esm
             && c.options.compile
         {

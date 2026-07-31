@@ -53,6 +53,53 @@ import { generateUnifiedSources } from "./unified.ts";
 // in config.ts now so flags.ts can use bunExeName without circular import.
 export { bunExeName, shouldStrip };
 
+const HARE_LINK_MANIFEST_VERSION = "HARE-LINK-MANIFEST-1";
+
+function responseFileArgument(argument: string): string {
+  return `"${argument.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+function absoluteLinkInput(cfg: Config, input: string): string {
+  return resolve(cfg.buildDir, input);
+}
+
+/**
+ * Preserve the exact native link partition used for Bun itself. `--hare`
+ * inserts one application object between these response files, so static
+ * archive ordering and every debug/sanitizer/toolchain flag remain identical
+ * to the already-validated host link.
+ */
+function emitHareLinkManifest(
+  cfg: Config,
+  prefixInputs: string[],
+  suffixInputs: string[],
+  libraries: string[],
+  linkerFlags: string[],
+): void {
+  const prefixPath = resolve(cfg.buildDir, "hare-link-prefix.rsp");
+  const suffixPath = resolve(cfg.buildDir, "hare-link-suffix.rsp");
+  const manifestPath = resolve(cfg.buildDir, "hare-link.manifest");
+
+  writeIfChanged(
+    prefixPath,
+    `${prefixInputs.map(input => responseFileArgument(absoluteLinkInput(cfg, input))).join("\n")}\n`,
+  );
+  writeIfChanged(
+    suffixPath,
+    `${[
+      ...suffixInputs.map(input => absoluteLinkInput(cfg, input)),
+      ...libraries.map(input => (input.startsWith("-") ? input : absoluteLinkInput(cfg, input))),
+      ...linkerFlags,
+    ]
+      .map(responseFileArgument)
+      .join("\n")}\n`,
+  );
+  writeIfChanged(
+    manifestPath,
+    [HARE_LINK_MANIFEST_VERSION, cfg.os, cfg.arch, cfg.cc, cfg.cxx, prefixPath, suffixPath, ""].join("\n"),
+  );
+}
+
 /**
  * System libraries to link. Platform-dependent.
  */
@@ -497,8 +544,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const shims = emitShims(n, cfg);
   // rustLtoLinkInputs(): on ELF cross-language LTO targets the Rust bitcode
   // is rewritten with a regular-LTO summary first (identity elsewhere).
-  const linkObjects = [...allObjects, ...rustLtoLinkInputs(n, cfg, rustObjects), ...windowsRes];
+  const linkedRustObjects = rustLtoLinkInputs(n, cfg, rustObjects);
+  const linkObjects = [...allObjects, ...linkedRustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
+  emitHareLinkManifest(cfg, allObjects, [...linkedRustObjects, ...windowsRes], depLibs, ldflags);
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     flags: ldflags,
@@ -612,6 +661,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   const shims = emitShims(n, cfg);
   const linkObjects = [archive, ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
+  emitHareLinkManifest(cfg, [archive], [...rustObjects, ...windowsRes], depLibs, ldflags);
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     flags: ldflags,
@@ -687,6 +737,7 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const shims = emitShims(n, cfg);
   const linkObjects = [archive, ...rustLtoLinkInputs(n, cfg, rustObjects), ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
+  emitHareLinkManifest(cfg, [archive], linkObjects.slice(1), depLibs, ldflags);
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     flags: ldflags,

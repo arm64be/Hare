@@ -268,6 +268,8 @@ pub mod options {
         Bytecode,
         #[strum(serialize = "module_info")]
         ModuleInfo,
+        #[strum(serialize = "hare-llvm-ir")]
+        HareLlvmIr,
         #[strum(serialize = "metafile-json")]
         MetafileJson,
         #[strum(serialize = "metafile-markdown")]
@@ -281,6 +283,7 @@ pub mod options {
                 OutputKind::Sourcemap
                     | OutputKind::Bytecode
                     | OutputKind::ModuleInfo
+                    | OutputKind::HareLlvmIr
                     | OutputKind::MetafileJson
                     | OutputKind::MetafileMarkdown
             )

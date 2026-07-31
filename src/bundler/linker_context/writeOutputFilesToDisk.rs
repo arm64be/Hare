@@ -389,7 +389,7 @@ pub(crate) fn write_output_files_to_disk(
             SourceMapOption::None => {}
         }
 
-        let bytecode_output_file: Option<OutputFile> = 'brk: {
+        let compiled_output_file: Option<OutputFile> = 'brk: {
             if c.options.generate_bytecode_cache {
                 let loader: Loader = if chunk.entry_point.is_entry_point() {
                     parse_graph.input_files.items_loader()
@@ -410,33 +410,78 @@ pub(crate) fn write_output_files_to_disk(
                     let mut source_provider_url = bun_core::OwnedString::new(source_provider_url);
 
                     if c.options.hare {
-                        let diagnostic = match crate::bundle_v2::dispatch::import_hare(
+                        let unit = match crate::bundle_v2::dispatch::import_hare(
                             c.options.output_format,
                             &code_result.buffer,
                             &mut source_provider_url,
                         ) {
-                            Ok(unit) => {
-                                match crate::bundle_v2::dispatch::validate_hare_import(&unit) {
-                                    Ok(coverage) => format!(
-                                        "Hare frontend imported {} owned function(s) and validated {} semantic instruction(s) ({} cache-only excluded) for {}; native application lowering is not yet converged",
-                                        unit.functions.len(),
-                                        coverage.semantic_instructions,
-                                        coverage.excluded_cache_instructions,
+                            Ok(unit) => unit,
+                            Err(error) => {
+                                let _ = c.log_disjoint().add_error_fmt(
+                                    None,
+                                    Loc::EMPTY,
+                                    format_args!(
+                                        "Hare frontend import failed for {}: {error}",
                                         bstr::BStr::new(&chunk.final_rel_path)
                                     ),
-                                    Err(error) => format!(
-                                        "Hare frontend validation failed for {}: {error}",
-                                        bstr::BStr::new(&chunk.final_rel_path)
-                                    ),
-                                }
+                                );
+                                return Err(crate::Error::BuildFailed);
                             }
-                            Err(error) => format!(
-                                "Hare frontend import failed for {}: {error}",
-                                bstr::BStr::new(&chunk.final_rel_path)
-                            ),
                         };
-                        let _ = c.log_disjoint().add_error(None, Loc::EMPTY, diagnostic);
-                        return Err(crate::Error::BuildFailed);
+                        if let Err(error) = crate::bundle_v2::dispatch::validate_hare_import(&unit)
+                        {
+                            let _ = c.log_disjoint().add_error_fmt(
+                                None,
+                                Loc::EMPTY,
+                                format_args!(
+                                    "Hare frontend validation failed for {}: {error}",
+                                    bstr::BStr::new(&chunk.final_rel_path)
+                                ),
+                            );
+                            return Err(crate::Error::BuildFailed);
+                        }
+                        let llvm_ir = match crate::bundle_v2::dispatch::lower_hare_application(
+                            &code_result.buffer,
+                        ) {
+                            Ok(llvm_ir) => llvm_ir,
+                            Err(error) => {
+                                let _ = c.log_disjoint().add_error_fmt(
+                                    None,
+                                    Loc::EMPTY,
+                                    format_args!(
+                                        "Hare native lowering failed for {}: {error}",
+                                        bstr::BStr::new(&chunk.final_rel_path)
+                                    ),
+                                );
+                                return Err(crate::Error::BuildFailed);
+                            }
+                        };
+                        let mut llvm_path = chunk.final_rel_path.to_vec();
+                        llvm_path.extend_from_slice(b".hare.ll");
+                        break 'brk Some(OutputFile::init(OutputFileInit {
+                            output_path: llvm_path.clone().into_boxed_slice(),
+                            input_path: llvm_path.into_boxed_slice(),
+                            input_loader: Loader::Js,
+                            hash: if chunk.template.placeholder.hash.is_some() {
+                                Some(hash(&llvm_ir))
+                            } else {
+                                None
+                            },
+                            output_kind: options::OutputKind::HareLlvmIr,
+                            loader: Loader::File,
+                            size: Some(llvm_ir.len()),
+                            display_size: llvm_ir.len() as u32,
+                            data: OutputFileData::Buffer { data: llvm_ir },
+                            side: None,
+                            entry_point_index: None,
+                            is_executable: false,
+                            source_map_index: None,
+                            bytecode_index: None,
+                            module_info_index: None,
+                            referenced_css_chunks: Box::default(),
+                            source_index: IndexOptional::NONE,
+                            bake_extra: BakeExtra::default(),
+                        }));
                     }
 
                     if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
@@ -562,11 +607,13 @@ pub(crate) fn write_output_files_to_disk(
             None
         };
 
-        let bytecode_index: Option<u32> = if let Some(f) = bytecode_output_file {
+        let compiled_index: Option<u32> = if let Some(f) = compiled_output_file {
             Some(output_files.insert_for_sourcemap_or_bytecode(f)?)
         } else {
             None
         };
+
+        let bytecode_index = if c.options.hare { None } else { compiled_index };
 
         let output_kind = if matches!(chunk.content, Content::Css(_)) {
             options::OutputKind::Asset

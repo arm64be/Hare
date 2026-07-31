@@ -775,6 +775,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         OutputKind::Bytecode => {}
                         OutputKind::Sourcemap => {}
                         OutputKind::ModuleInfo => {}
+                        OutputKind::HareLlvmIr => {}
                         OutputKind::MetafileJson | OutputKind::MetafileMarkdown => {}
                     }
                 }

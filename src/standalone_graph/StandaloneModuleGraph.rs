@@ -608,7 +608,8 @@ bitflags::bitflags! {
         const DISABLE_AUTOLOAD_BUNFIG       = 1 << 1;
         const DISABLE_AUTOLOAD_TSCONFIG     = 1 << 2;
         const DISABLE_AUTOLOAD_PACKAGE_JSON = 1 << 3;
-        // _padding: u28
+        const HARE_NATIVE                    = 1 << 4;
+        // _padding: u27
     }
 }
 
@@ -832,6 +833,9 @@ pub(crate) fn to_bytes(
                 string_builder.cap += bytes.len().div_ceil(256) * 256 + 256;
             } else if output_file.output_kind == options::OutputKind::ModuleInfo {
                 string_builder.cap += bytes.len();
+            } else if output_file.output_kind == options::OutputKind::HareLlvmIr {
+                // Consumed by the application-specific native link before
+                // serialization. It must never enter the standalone graph.
             } else {
                 if entry_point_id.is_none() {
                     if output_file.side.is_none() || output_file.side == Some(options::Side::Server)

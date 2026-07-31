@@ -1,6 +1,6 @@
 use hare_llvm::{
     AbiType, NativeBody, NativeFunction, NativeModule, TargetArchitecture, TargetLayout,
-    TargetOperatingSystem,
+    TargetOperatingSystem, compile_static_application,
 };
 use std::io::Write;
 use std::path::PathBuf;
@@ -94,6 +94,36 @@ fn pinned_llvm_assembles_emitted_module() {
     assert!(
         output.status.success(),
         "pinned llvm-as rejected Hare IR: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn pinned_llvm_assembles_native_application_entry() {
+    let application = compile_static_application(
+        b"function nested(value) { return value + 1; } console.log(nested(41));",
+        TargetLayout::for_target(TargetOperatingSystem::Linux, TargetArchitecture::X86_64),
+    )
+    .unwrap();
+    let ir = application.emit_llvm_ir();
+    let llvm_as = pinned_llvm_as();
+    let mut child = Command::new(&llvm_as)
+        .args(["-o", "-", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(ir.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "pinned llvm-as rejected Hare application IR: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

@@ -366,6 +366,7 @@ dependencies = [
  "enumset",
  "hare_frontend",
  "hare_ir",
+ "hare_llvm",
  "libc",
  "lol_html",
  "scopeguard",
