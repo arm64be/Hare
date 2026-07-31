@@ -445,6 +445,58 @@
     "source": "function h026MutateObject(object) { object.value = 42; return object; } const h026SharedObject = { value: 0 }; console.log(h026MutateObject(h026SharedObject) === h026SharedObject); console.log(h026SharedObject.value);"
   },
   {
+    "id": "object.ordinary-construction",
+    "family": "object_property",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_new_func",
+      "op_new_object",
+      "op_put_by_id",
+      "op_construct",
+      "op_create_this",
+      "op_is_object",
+      "op_jtrue",
+      "op_to_this",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_call",
+      "op_call_ignore_result",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "function H026Constructor(value) { this.value = value; return 7; } const h026Constructed = new H026Constructor(42); const h026Receiver = { build: H026Constructor }; console.log(h026Constructed.value); console.log(h026Receiver.build(9)); console.log(h026Receiver.value);"
+  },
+  {
+    "id": "object.class-construction",
+    "family": "object_property",
+    "lowering": "imported",
+    "opcodes": [
+      "op_enter",
+      "op_mov",
+      "op_new_func_exp",
+      "op_new_object",
+      "op_define_data_property",
+      "op_put_by_id",
+      "op_call_ignore_result",
+      "op_jmp",
+      "op_catch",
+      "op_throw_static_error",
+      "op_unreachable",
+      "op_construct",
+      "op_create_this",
+      "op_instanceof",
+      "op_resolve_scope",
+      "op_get_from_scope",
+      "op_get_by_id",
+      "op_ret"
+    ],
+    "verified_opcodes": [],
+    "source": "class H026Class { constructor(value) { this.value = value; } } let h026ClassCallError = \"\"; try { H026Class(1); } catch (error) { h026ClassCallError = error.name; } const h026ClassInstance = new H026Class(42); console.log(h026ClassCallError); console.log(h026ClassInstance instanceof H026Class); console.log(h026ClassInstance.value);"
+  },
+  {
     "id": "object.static-array-elements",
     "family": "object_property",
     "lowering": "imported",

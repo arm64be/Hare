@@ -4,8 +4,9 @@ use std::fmt::Write as _;
 use std::rc::Rc;
 
 use hare_ir::{
-    FIRST_CONSTANT_REGISTER_INDEX, FunctionId, FunctionRelation, OperandValue, OwnedVisitorUnit,
-    SourceText, VisitorConstantValue, VisitorFunction, VisitorInstruction,
+    FIRST_CONSTANT_REGISTER_INDEX, FunctionId, FunctionRelation, FunctionSpecialization,
+    OperandValue, OwnedVisitorUnit, SourceText, VisitorConstantValue, VisitorFunction,
+    VisitorInstruction,
 };
 
 use crate::{LlvmError, TargetLayout};
@@ -95,9 +96,11 @@ enum RegisterValue {
     Concatenation(Vec<Self>),
     BooleanScalar(ScalarExpression),
     Function {
-        id: FunctionId,
+        call: FunctionId,
+        construct: Option<FunctionId>,
         environment: Option<StaticEnvironmentRef>,
         identity: u32,
+        heap_id: u32,
     },
     RegExpTemplate {
         pattern: SourceText,
@@ -146,15 +149,40 @@ enum RegisterValue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum StaticHeapEntry {
     Object {
-        properties: BTreeMap<Box<str>, RegisterValue>,
+        prototype: Option<u32>,
+        properties: BTreeMap<Box<str>, StaticProperty>,
         property_order: Vec<Box<str>>,
     },
     Array {
-        elements: BTreeMap<u32, RegisterValue>,
-        properties: BTreeMap<Box<str>, RegisterValue>,
+        prototype: Option<u32>,
+        elements: BTreeMap<u32, StaticProperty>,
+        properties: BTreeMap<Box<str>, StaticProperty>,
         property_order: Vec<Box<str>>,
         length: u32,
     },
+    Function {
+        properties: BTreeMap<Box<str>, StaticProperty>,
+        property_order: Vec<Box<str>>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StaticProperty {
+    value: RegisterValue,
+    writable: bool,
+    enumerable: bool,
+    configurable: bool,
+}
+
+impl StaticProperty {
+    fn assigned(value: RegisterValue) -> Self {
+        Self {
+            value,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -190,10 +218,19 @@ enum StaticPropertyKey {
     Name(Box<str>),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StaticDefinePropertyAttributes {
+    configurable: Option<bool>,
+    enumerable: Option<bool>,
+    writable: Option<bool>,
+    has_value: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LoweredBody {
     result: Option<RegisterValue>,
     writes: Vec<RegisterValue>,
+    abrupt: Option<RegisterValue>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -237,12 +274,16 @@ pub fn compile_imported_scalar_application(
             &call_arities,
             None,
             None,
+            None,
             &mut state,
             0,
         ) else {
             continue;
         };
         if !body.writes.is_empty() {
+            continue;
+        }
+        if body.abrupt.is_some() {
             continue;
         }
         let Some(result) = body.result else {
@@ -276,9 +317,13 @@ pub fn compile_imported_scalar_application(
         &call_arities,
         None,
         None,
+        None,
         &mut state,
         0,
     )?;
+    if root_body.abrupt.is_some() {
+        return Err(imported_error("root function completes abruptly"));
+    }
     if root_body.writes.is_empty() {
         return Err(imported_error(
             "root function performs no admitted native output",
@@ -309,6 +354,7 @@ fn infer_static_call_arities(
                         function.id,
                         descriptor.opcode,
                         unsigned_operand(instruction, "functionDecl")?,
+                        FunctionSpecialization::Call,
                     )?;
                     function_registers.insert(signed_operand(instruction, "dst")?, child);
                 }
@@ -318,6 +364,7 @@ fn infer_static_call_arities(
                         function.id,
                         descriptor.opcode,
                         unsigned_operand(instruction, "functionDecl")?,
+                        FunctionSpecialization::Call,
                     )?;
                     function_registers.insert(signed_operand(instruction, "dst")?, child);
                 }
@@ -367,6 +414,7 @@ fn lower_function(
     call_arities: &BTreeMap<FunctionId, usize>,
     explicit_arguments: Option<&[RegisterValue]>,
     explicit_environment: Option<StaticEnvironmentRef>,
+    explicit_this: Option<RegisterValue>,
     state: &mut StaticExecutionState,
     call_depth: usize,
 ) -> Result<LoweredBody, LlvmError> {
@@ -380,10 +428,11 @@ fn lower_function(
             .map(RegisterValue::Environment)
             .unwrap_or(RegisterValue::Opaque),
     );
-    registers.insert(function.this_register as i64, RegisterValue::Opaque);
+    let this_value = explicit_this.unwrap_or(RegisterValue::Undefined);
+    registers.insert(function.this_register as i64, this_value.clone());
     registers.insert(
         function.call_frame_this_argument_register as i64,
-        RegisterValue::Undefined,
+        this_value,
     );
     let parameter_count = explicit_arguments.map_or_else(
         || static_parameter_count(function, call_arities),
@@ -416,6 +465,7 @@ fn lower_function(
     let mut writes = Vec::new();
     let mut result = None;
     let mut pending_exception = None;
+    let mut abrupt = None;
     let instruction_indices = function
         .instructions
         .iter()
@@ -574,23 +624,15 @@ fn lower_function(
                         message,
                     }
                 };
-                let Some(handler) = function.exception_handlers.iter().find(|handler| {
-                    handler.start <= instruction.byte_offset
-                        && instruction.byte_offset < handler.end
-                }) else {
-                    return Err(imported_error(format!(
-                        "f{} has an uncaught static throw at byte {}",
-                        function.id.0, instruction.byte_offset
-                    )));
-                };
-                pending_exception = Some(thrown);
-                instruction_index = instruction_indices
-                    .get(&handler.target)
-                    .copied()
-                    .ok_or_else(|| {
-                        imported_error("exception handler target is not an instruction")
-                    })?;
-                continue;
+                if let Some(target) =
+                    static_exception_target(function, instruction, &instruction_indices)?
+                {
+                    pending_exception = Some(thrown);
+                    instruction_index = target;
+                    continue;
+                }
+                abrupt = Some(thrown);
+                break;
             }
             "op_catch" => {
                 let thrown = pending_exception.take().ok_or_else(|| {
@@ -617,6 +659,34 @@ fn lower_function(
                 state.heap.insert(
                     id,
                     StaticHeapEntry::Object {
+                        prototype: None,
+                        properties: BTreeMap::new(),
+                        property_order: Vec::new(),
+                    },
+                );
+                registers.insert(destination, RegisterValue::Object(id));
+            }
+            "op_create_this" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let callee =
+                    read_register(function, &registers, signed_operand(instruction, "callee")?)?;
+                if !matches!(callee, RegisterValue::Function { .. }) {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                }
+                let prototype = static_get_property(
+                    &state.heap,
+                    &callee,
+                    StaticPropertyKey::Name("prototype".into()),
+                )?;
+                let prototype = match prototype {
+                    RegisterValue::Object(id) => id,
+                    _ => return Err(unsupported(function, instruction, descriptor.opcode)),
+                };
+                let id = state.allocate_heap_id()?;
+                state.heap.insert(
+                    id,
+                    StaticHeapEntry::Object {
+                        prototype: Some(prototype),
                         properties: BTreeMap::new(),
                         property_order: Vec::new(),
                     },
@@ -711,7 +781,7 @@ fn lower_function(
                     .enumerate()
                     .map(|(index, value)| {
                         u32::try_from(index)
-                            .map(|index| (index, value))
+                            .map(|index| (index, StaticProperty::assigned(value)))
                             .map_err(|_| imported_error("immutable array index exceeds u32"))
                     })
                     .collect::<Result<BTreeMap<_, _>, _>>()?;
@@ -719,6 +789,7 @@ fn lower_function(
                 state.heap.insert(
                     id,
                     StaticHeapEntry::Array {
+                        prototype: None,
                         elements,
                         properties: BTreeMap::new(),
                         property_order: Vec::new(),
@@ -739,7 +810,10 @@ fn lower_function(
                         .ok_or_else(|| imported_error("array register range underflow"))?;
                     let index = u32::try_from(index)
                         .map_err(|_| imported_error("array literal length exceeds u32"))?;
-                    elements.insert(index, read_register(function, &registers, register)?);
+                    elements.insert(
+                        index,
+                        StaticProperty::assigned(read_register(function, &registers, register)?),
+                    );
                 }
                 let length = u32::try_from(count)
                     .map_err(|_| imported_error("array literal length exceeds u32"))?;
@@ -747,6 +821,7 @@ fn lower_function(
                 state.heap.insert(
                     id,
                     StaticHeapEntry::Array {
+                        prototype: None,
                         elements,
                         properties: BTreeMap::new(),
                         property_order: Vec::new(),
@@ -768,6 +843,7 @@ fn lower_function(
                 state.heap.insert(
                     id,
                     StaticHeapEntry::Array {
+                        prototype: None,
                         elements: BTreeMap::new(),
                         properties: BTreeMap::new(),
                         property_order: Vec::new(),
@@ -790,12 +866,13 @@ fn lower_function(
                     .iter()
                     .cloned()
                     .enumerate()
-                    .map(|(index, value)| (index as u32, value))
+                    .map(|(index, value)| (index as u32, StaticProperty::assigned(value)))
                     .collect();
                 let id = state.allocate_heap_id()?;
                 state.heap.insert(
                     id,
                     StaticHeapEntry::Array {
+                        prototype: None,
                         elements,
                         properties: BTreeMap::new(),
                         property_order: Vec::new(),
@@ -824,7 +901,7 @@ fn lower_function(
                     .map(|index| {
                         elements
                             .get(&index)
-                            .cloned()
+                            .map(|property| property.value.clone())
                             .unwrap_or(RegisterValue::Undefined)
                     })
                     .collect();
@@ -851,12 +928,13 @@ fn lower_function(
                 let elements = values
                     .into_iter()
                     .enumerate()
-                    .map(|(index, value)| (index as u32, value))
+                    .map(|(index, value)| (index as u32, StaticProperty::assigned(value)))
                     .collect();
                 let id = state.allocate_heap_id()?;
                 state.heap.insert(
                     id,
                     StaticHeapEntry::Array {
+                        prototype: None,
                         elements,
                         properties: BTreeMap::new(),
                         property_order: Vec::new(),
@@ -879,10 +957,42 @@ fn lower_function(
                     value,
                 )?;
             }
+            "op_define_data_property" => {
+                let base =
+                    read_register(function, &registers, signed_operand(instruction, "base")?)?;
+                let property = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "property")?,
+                )?;
+                let property = static_property_key(&property, functions)?;
+                let value =
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                let attributes = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "attributes")?,
+                )?;
+                let attributes = static_define_property_attributes(&attributes, functions)?;
+                static_define_data_property(&mut state.heap, &base, property, value, attributes)?;
+            }
             "op_new_func" | "op_new_func_exp" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let index = unsigned_operand(instruction, "functionDecl")?;
-                let child = child_function(unit, function.id, descriptor.opcode, index)?;
+                let call = child_function(
+                    unit,
+                    function.id,
+                    descriptor.opcode,
+                    index,
+                    FunctionSpecialization::Call,
+                )?;
+                let construct = child_function_optional(
+                    unit,
+                    function.id,
+                    descriptor.opcode,
+                    index,
+                    FunctionSpecialization::Construct,
+                );
                 let environment = match read_register(
                     function,
                     &registers,
@@ -893,14 +1003,53 @@ fn lower_function(
                     _ => return Err(unsupported(function, instruction, descriptor.opcode)),
                 };
                 let identity = state.allocate_function_identity()?;
-                registers.insert(
-                    destination,
-                    RegisterValue::Function {
-                        id: child,
-                        environment,
-                        identity,
+                let heap_id = state.allocate_heap_id()?;
+                let value = RegisterValue::Function {
+                    call,
+                    construct,
+                    environment,
+                    identity,
+                    heap_id,
+                };
+                let mut properties = BTreeMap::new();
+                let mut property_order = Vec::new();
+                if construct.is_some() {
+                    let prototype_id = state.allocate_heap_id()?;
+                    state.heap.insert(
+                        prototype_id,
+                        StaticHeapEntry::Object {
+                            prototype: None,
+                            properties: BTreeMap::from([(
+                                "constructor".into(),
+                                StaticProperty {
+                                    value: value.clone(),
+                                    writable: true,
+                                    enumerable: false,
+                                    configurable: true,
+                                },
+                            )]),
+                            property_order: vec!["constructor".into()],
+                        },
+                    );
+                    properties.insert(
+                        "prototype".into(),
+                        StaticProperty {
+                            value: RegisterValue::Object(prototype_id),
+                            writable: true,
+                            enumerable: false,
+                            configurable: false,
+                        },
+                    );
+                    property_order.push("prototype".into());
+                }
+                state.heap.insert(
+                    heap_id,
+                    StaticHeapEntry::Function {
+                        properties,
+                        property_order,
                     },
                 );
+                registers.insert(destination, value);
             }
             "op_create_lexical_environment" | "op_create_generator_frame_environment" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -1061,6 +1210,40 @@ fn lower_function(
                     destination,
                     RegisterValue::Scalar(ScalarExpression::Integer(length)),
                 );
+            }
+            "op_get_prototype_of" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let value =
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                let prototype = static_prototype_id(&state.heap, &value)?
+                    .map(|id| static_heap_value(&state.heap, id))
+                    .transpose()?
+                    .unwrap_or(RegisterValue::Null);
+                registers.insert(destination, prototype);
+            }
+            "op_instanceof" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let value =
+                    read_register(function, &registers, signed_operand(instruction, "value")?)?;
+                let constructor = read_register(
+                    function,
+                    &registers,
+                    signed_operand(instruction, "constructor")?,
+                )?;
+                let prototype = static_get_property(
+                    &state.heap,
+                    &constructor,
+                    StaticPropertyKey::Name("prototype".into()),
+                )?;
+                let RegisterValue::Object(prototype_id) = prototype.clone() else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let result = static_prototype_chain_contains(&state.heap, &value, prototype_id)?;
+                registers.insert(
+                    signed_operand(instruction, "hasInstanceOrPrototype")?,
+                    prototype,
+                );
+                registers.insert(destination, RegisterValue::Boolean(result));
             }
             "op_get_property_enumerator" => {
                 let destination = signed_operand(instruction, "dst")?;
@@ -1540,6 +1723,24 @@ fn lower_function(
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
             }
+            "op_to_this" => {
+                let register = signed_operand(instruction, "srcDst")?;
+                let value = read_register(function, &registers, register)?;
+                let _ecma_mode = unsigned_operand(instruction, "ecmaMode")?;
+                if !matches!(
+                    value,
+                    RegisterValue::Function { .. }
+                        | RegisterValue::RegExp { .. }
+                        | RegisterValue::Object(_)
+                        | RegisterValue::Array(_)
+                        | RegisterValue::Arguments(_)
+                        | RegisterValue::ConsoleObject
+                        | RegisterValue::Error { .. }
+                ) {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                }
+                registers.insert(register, value);
+            }
             "op_strcat" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let source = signed_operand(instruction, "src")?;
@@ -1564,8 +1765,9 @@ fn lower_function(
             "op_call" | "op_tail_call" => {
                 let destination = signed_operand(instruction, "dst")?;
                 let callee_register = signed_operand(instruction, "callee")?;
+                let this_value = call_this_value(function, instruction, &registers)?;
                 let RegisterValue::Function {
-                    id: callee,
+                    call: callee,
                     environment,
                     ..
                 } = read_register(function, &registers, callee_register)?
@@ -1608,11 +1810,23 @@ fn lower_function(
                         call_arities,
                         Some(&arguments),
                         environment,
+                        Some(this_value),
                         state,
                         call_depth + 1,
                     )?;
                     if !body.writes.is_empty() {
                         return Err(unsupported(function, instruction, descriptor.opcode));
+                    }
+                    if let Some(thrown) = body.abrupt {
+                        if let Some(target) =
+                            static_exception_target(function, instruction, &instruction_indices)?
+                        {
+                            pending_exception = Some(thrown);
+                            instruction_index = target;
+                            continue;
+                        }
+                        abrupt = Some(thrown);
+                        break;
                     }
                     body.result.unwrap_or(RegisterValue::Undefined)
                 };
@@ -1622,21 +1836,109 @@ fn lower_function(
                     break;
                 }
             }
-            "op_call_ignore_result" => {
-                let callee = signed_operand(instruction, "callee")?;
-                if !matches!(
-                    read_register(function, &registers, callee)?,
-                    RegisterValue::ConsoleLog
-                ) {
+            "op_construct" => {
+                let destination = signed_operand(instruction, "dst")?;
+                let callee_value =
+                    read_register(function, &registers, signed_operand(instruction, "callee")?)?;
+                let RegisterValue::Function {
+                    construct: Some(callee),
+                    environment,
+                    ..
+                } = callee_value.clone()
+                else {
+                    return Err(unsupported(function, instruction, descriptor.opcode));
+                };
+                let arguments = call_register_values(function, instruction, &registers)?;
+                let callee_definition = unit.functions.get(callee.index()).ok_or_else(|| {
+                    imported_error(format!(
+                        "f{} constructs missing f{}",
+                        function.id.0, callee.0
+                    ))
+                })?;
+                let body = lower_function(
+                    unit,
+                    callee_definition,
+                    functions,
+                    call_arities,
+                    Some(&arguments),
+                    environment,
+                    Some(callee_value),
+                    state,
+                    call_depth + 1,
+                )?;
+                if !body.writes.is_empty() {
                     return Err(unsupported(function, instruction, descriptor.opcode));
                 }
-                let mut arguments = call_register_values(function, instruction, &registers)?;
-                if arguments.len() > 1 {
-                    return Err(imported_error(
-                        "imported scalar console.log accepts at most one argument",
-                    ));
+                if let Some(thrown) = body.abrupt {
+                    if let Some(target) =
+                        static_exception_target(function, instruction, &instruction_indices)?
+                    {
+                        pending_exception = Some(thrown);
+                        instruction_index = target;
+                        continue;
+                    }
+                    abrupt = Some(thrown);
+                    break;
                 }
-                writes.push(arguments.pop().unwrap_or(RegisterValue::ConsoleNoArgument));
+                registers.insert(destination, body.result.unwrap_or(RegisterValue::Undefined));
+            }
+            "op_call_ignore_result" => {
+                let callee = signed_operand(instruction, "callee")?;
+                match read_register(function, &registers, callee)? {
+                    RegisterValue::ConsoleLog => {
+                        let mut arguments =
+                            call_register_values(function, instruction, &registers)?;
+                        if arguments.len() > 1 {
+                            return Err(imported_error(
+                                "imported scalar console.log accepts at most one argument",
+                            ));
+                        }
+                        writes.push(arguments.pop().unwrap_or(RegisterValue::ConsoleNoArgument));
+                    }
+                    RegisterValue::Function {
+                        call: callee,
+                        environment,
+                        ..
+                    } => {
+                        let this_value = call_this_value(function, instruction, &registers)?;
+                        let arguments = call_register_values(function, instruction, &registers)?;
+                        let callee_definition =
+                            unit.functions.get(callee.index()).ok_or_else(|| {
+                                imported_error(format!(
+                                    "f{} calls missing f{}",
+                                    function.id.0, callee.0
+                                ))
+                            })?;
+                        let body = lower_function(
+                            unit,
+                            callee_definition,
+                            functions,
+                            call_arities,
+                            Some(&arguments),
+                            environment,
+                            Some(this_value),
+                            state,
+                            call_depth + 1,
+                        )?;
+                        if !body.writes.is_empty() {
+                            return Err(unsupported(function, instruction, descriptor.opcode));
+                        }
+                        if let Some(thrown) = body.abrupt {
+                            if let Some(target) = static_exception_target(
+                                function,
+                                instruction,
+                                &instruction_indices,
+                            )? {
+                                pending_exception = Some(thrown);
+                                instruction_index = target;
+                                continue;
+                            }
+                            abrupt = Some(thrown);
+                            break;
+                        }
+                    }
+                    _ => return Err(unsupported(function, instruction, descriptor.opcode)),
+                }
             }
             "op_ret" => {
                 let value = signed_operand(instruction, "value")?;
@@ -1647,7 +1949,28 @@ fn lower_function(
         }
         instruction_index += 1;
     }
-    Ok(LoweredBody { result, writes })
+    Ok(LoweredBody {
+        result,
+        writes,
+        abrupt,
+    })
+}
+
+fn static_exception_target(
+    function: &VisitorFunction,
+    instruction: &VisitorInstruction,
+    instruction_indices: &BTreeMap<u32, usize>,
+) -> Result<Option<usize>, LlvmError> {
+    let Some(handler) = function.exception_handlers.iter().find(|handler| {
+        handler.start <= instruction.byte_offset && instruction.byte_offset < handler.end
+    }) else {
+        return Ok(None);
+    };
+    instruction_indices
+        .get(&handler.target)
+        .copied()
+        .map(Some)
+        .ok_or_else(|| imported_error("exception handler target is not an instruction"))
 }
 
 fn branch_target_index(
@@ -1948,6 +2271,22 @@ fn call_register_values(
     (1..count)
         .map(|index| read_register(function, registers, this_register + index as i64))
         .collect()
+}
+
+fn call_this_value(
+    function: &VisitorFunction,
+    instruction: &VisitorInstruction,
+    registers: &BTreeMap<i64, RegisterValue>,
+) -> Result<RegisterValue, LlvmError> {
+    let count = usize::try_from(unsigned_operand(instruction, "argc")?)
+        .map_err(|_| imported_error("call argument count does not fit usize"))?;
+    if count == 0 {
+        return Err(imported_error("JSC call has no this argument"));
+    }
+    let argv = i64::try_from(unsigned_operand(instruction, "argv")?)
+        .map_err(|_| imported_error("call argv does not fit i64"))?;
+    let this_register = -argv + i64::from(function.call_frame_this_argument_register);
+    read_register(function, registers, this_register)
 }
 
 fn read_register(
@@ -2293,7 +2632,23 @@ fn child_function(
     parent: FunctionId,
     opcode: &str,
     index: u64,
+    specialization: FunctionSpecialization,
 ) -> Result<FunctionId, LlvmError> {
+    child_function_optional(unit, parent, opcode, index, specialization).ok_or_else(|| {
+        imported_error(format!(
+            "f{} references missing {specialization:?} child {index}",
+            parent.0
+        ))
+    })
+}
+
+fn child_function_optional(
+    unit: &OwnedVisitorUnit,
+    parent: FunctionId,
+    opcode: &str,
+    index: u64,
+    specialization: FunctionSpecialization,
+) -> Option<FunctionId> {
     let relation_matches = |relation: &FunctionRelation| match (opcode, relation) {
         ("op_new_func", FunctionRelation::Declaration { index: actual }) => {
             u64::from(*actual) == index
@@ -2305,9 +2660,12 @@ fn child_function(
     };
     unit.functions
         .iter()
-        .find(|function| function.parent == Some(parent) && relation_matches(&function.relation))
+        .find(|function| {
+            function.parent == Some(parent)
+                && relation_matches(&function.relation)
+                && function.specialization == specialization
+        })
         .map(|function| function.id)
-        .ok_or_else(|| imported_error(format!("f{} references missing child {index}", parent.0)))
 }
 
 fn resolve_environment(
@@ -2409,12 +2767,45 @@ fn static_property_key(
     }
 }
 
+fn static_define_property_attributes(
+    value: &RegisterValue,
+    functions: &BTreeMap<FunctionId, ScalarFunction>,
+) -> Result<StaticDefinePropertyAttributes, LlvmError> {
+    let RegisterValue::Scalar(expression) = value else {
+        return Err(imported_error(
+            "define-property attributes are not a static integer",
+        ));
+    };
+    let raw = u32::try_from(evaluate(expression, functions, &[], 0)?)
+        .map_err(|_| imported_error("define-property attributes exceed u32"))?;
+    if raw & !0x1ff != 0 || raw & ((1 << 7) | (1 << 8)) != 0 {
+        return Err(imported_error(
+            "data-property attributes contain unsupported bits",
+        ));
+    }
+    let tri_state = |shift: u32| match (raw >> shift) & 0b11_u32 {
+        0 => Ok(Some(false)),
+        1 => Ok(Some(true)),
+        2 => Ok(None),
+        _ => Err(imported_error(
+            "define-property attributes contain an invalid tri-state",
+        )),
+    };
+    Ok(StaticDefinePropertyAttributes {
+        configurable: tri_state(0)?,
+        enumerable: tri_state(2)?,
+        writable: tri_state(4)?,
+        has_value: raw & (1 << 6) != 0,
+    })
+}
+
 fn static_enumerable_keys(
     heap: &BTreeMap<u32, StaticHeapEntry>,
     base: &RegisterValue,
 ) -> Result<(u32, Vec<Box<str>>), LlvmError> {
     let id = match base {
         RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
         _ => return Err(imported_error("enumeration base is not a static object")),
     };
     let entry = heap
@@ -2424,6 +2815,7 @@ fn static_enumerable_keys(
         StaticHeapEntry::Object {
             properties,
             property_order,
+            ..
         } => ordered_property_keys(properties, property_order)?,
         StaticHeapEntry::Array {
             elements,
@@ -2432,23 +2824,29 @@ fn static_enumerable_keys(
             ..
         } => {
             let mut keys = elements
-                .keys()
-                .map(|index| index.to_string().into_boxed_str())
+                .iter()
+                .filter(|(_, property)| property.enumerable)
+                .map(|(index, _)| index.to_string().into_boxed_str())
                 .collect::<Vec<_>>();
             keys.extend(ordered_property_keys(properties, property_order)?);
             keys
         }
+        StaticHeapEntry::Function {
+            properties,
+            property_order,
+        } => ordered_property_keys(properties, property_order)?,
     };
     Ok((id, keys))
 }
 
 fn ordered_property_keys(
-    properties: &BTreeMap<Box<str>, RegisterValue>,
+    properties: &BTreeMap<Box<str>, StaticProperty>,
     property_order: &[Box<str>],
 ) -> Result<Vec<Box<str>>, LlvmError> {
     let mut index_keys = properties
-        .keys()
-        .filter_map(|name| canonical_array_index(name).map(|index| (index, name.clone())))
+        .iter()
+        .filter(|(_, property)| property.enumerable)
+        .filter_map(|(name, _)| canonical_array_index(name).map(|index| (index, name.clone())))
         .collect::<Vec<_>>();
     index_keys.sort_by_key(|(index, _)| *index);
     let mut keys = index_keys
@@ -2456,15 +2854,23 @@ fn ordered_property_keys(
         .map(|(_, name)| name)
         .collect::<Vec<_>>();
     for name in property_order {
-        if canonical_array_index(name).is_none() && properties.contains_key(name) {
+        if canonical_array_index(name).is_none()
+            && properties
+                .get(name)
+                .is_some_and(|property| property.enumerable)
+        {
             keys.push(name.clone());
         }
     }
     let expected = properties
-        .keys()
-        .filter(|name| canonical_array_index(name).is_none())
+        .iter()
+        .filter(|(name, property)| canonical_array_index(name).is_none() && property.enumerable)
         .count();
-    if keys.len() != properties.len() || property_order.len() < expected {
+    let enumerable_count = properties
+        .values()
+        .filter(|property| property.enumerable)
+        .count();
+    if keys.len() != enumerable_count || property_order.len() < expected {
         return Err(imported_error(
             "static property insertion order is incomplete",
         ));
@@ -2485,8 +2891,73 @@ fn ensure_enumerator_base(base: &RegisterValue, expected_heap_id: u32) -> Result
         {
             Ok(())
         }
+        RegisterValue::Function { heap_id, .. } if *heap_id == expected_heap_id => Ok(()),
         _ => Err(imported_error("enumerator base identity changed")),
     }
+}
+
+fn static_prototype_id(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    value: &RegisterValue,
+) -> Result<Option<u32>, LlvmError> {
+    let id = match value {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
+        _ => {
+            return Err(imported_error(
+                "prototype lookup base is not a static object",
+            ));
+        }
+    };
+    match heap
+        .get(&id)
+        .ok_or_else(|| imported_error("prototype lookup references a missing static heap entry"))?
+    {
+        StaticHeapEntry::Object { prototype, .. } | StaticHeapEntry::Array { prototype, .. } => {
+            Ok(*prototype)
+        }
+        StaticHeapEntry::Function { .. } => Ok(None),
+    }
+}
+
+fn static_heap_value(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    id: u32,
+) -> Result<RegisterValue, LlvmError> {
+    match heap
+        .get(&id)
+        .ok_or_else(|| imported_error("static heap value references a missing entry"))?
+    {
+        StaticHeapEntry::Object { .. } => Ok(RegisterValue::Object(id)),
+        StaticHeapEntry::Array { .. } => Ok(RegisterValue::Array(id)),
+        StaticHeapEntry::Function { .. } => Err(imported_error(
+            "function heap identity cannot be reconstructed without its executable",
+        )),
+    }
+}
+
+fn static_prototype_chain_contains(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    value: &RegisterValue,
+    expected: u32,
+) -> Result<bool, LlvmError> {
+    let mut current = static_prototype_id(heap, value)?;
+    for _ in 0..=64 {
+        let Some(id) = current else {
+            return Ok(false);
+        };
+        if id == expected {
+            return Ok(true);
+        }
+        current = match heap.get(&id).ok_or_else(|| {
+            imported_error("prototype chain references a missing static heap entry")
+        })? {
+            StaticHeapEntry::Object { prototype, .. }
+            | StaticHeapEntry::Array { prototype, .. } => *prototype,
+            StaticHeapEntry::Function { .. } => None,
+        };
+    }
+    Err(imported_error("static prototype chain exceeds 64 objects"))
 }
 
 fn static_get_property(
@@ -2526,43 +2997,101 @@ fn static_get_property(
     let (id, is_array) = match base {
         RegisterValue::Object(id) => (*id, false),
         RegisterValue::Array(id) => (*id, true),
+        RegisterValue::Function { heap_id, .. } => (*heap_id, false),
         _ => return Err(imported_error("property read base is not a static object")),
     };
+    if let Some(value) = static_lookup_property(heap, id, &key, 0)? {
+        return Ok(value);
+    }
+    match key {
+        StaticPropertyKey::Name(name) => inherited_static_property(&name, is_array),
+        StaticPropertyKey::Index(_) => Ok(RegisterValue::Undefined),
+    }
+}
+
+fn static_lookup_property(
+    heap: &BTreeMap<u32, StaticHeapEntry>,
+    id: u32,
+    key: &StaticPropertyKey,
+    depth: usize,
+) -> Result<Option<RegisterValue>, LlvmError> {
+    if depth > 64 {
+        return Err(imported_error("static prototype chain exceeds 64 objects"));
+    }
     let entry = heap
         .get(&id)
-        .ok_or_else(|| imported_error("property read references a missing static heap entry"))?;
-    match (entry, key) {
-        (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Name(name)) => properties
-            .get(&name)
-            .cloned()
-            .map(Ok)
-            .unwrap_or_else(|| inherited_static_property(&name, is_array)),
-        (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Index(index)) => {
-            let name = index.to_string();
-            properties
-                .get(name.as_str())
-                .cloned()
-                .map(Ok)
-                .unwrap_or(Ok(RegisterValue::Undefined))
-        }
-        (StaticHeapEntry::Array { elements, .. }, StaticPropertyKey::Index(index)) => Ok(elements
-            .get(&index)
-            .cloned()
-            .unwrap_or(RegisterValue::Undefined)),
+        .ok_or_else(|| imported_error("property lookup references a missing static heap entry"))?;
+    let (value, prototype) = match (entry, key) {
         (
-            StaticHeapEntry::Array {
-                properties, length, ..
+            StaticHeapEntry::Object {
+                properties,
+                prototype,
+                ..
             },
             StaticPropertyKey::Name(name),
-        ) if name.as_ref() == "length" => Ok(RegisterValue::Scalar(ScalarExpression::Integer(
-            i64::from(*length),
-        ))),
-        (StaticHeapEntry::Array { properties, .. }, StaticPropertyKey::Name(name)) => properties
-            .get(&name)
-            .cloned()
-            .map(Ok)
-            .unwrap_or_else(|| inherited_static_property(&name, is_array)),
+        ) => (
+            properties.get(name).map(|property| property.value.clone()),
+            *prototype,
+        ),
+        (
+            StaticHeapEntry::Object {
+                properties,
+                prototype,
+                ..
+            },
+            StaticPropertyKey::Index(index),
+        ) => (
+            properties
+                .get(index.to_string().as_str())
+                .map(|property| property.value.clone()),
+            *prototype,
+        ),
+        (StaticHeapEntry::Array { length, .. }, StaticPropertyKey::Name(name))
+            if name.as_ref() == "length" =>
+        {
+            return Ok(Some(RegisterValue::Scalar(ScalarExpression::Integer(
+                i64::from(*length),
+            ))));
+        }
+        (
+            StaticHeapEntry::Array {
+                properties,
+                prototype,
+                ..
+            },
+            StaticPropertyKey::Name(name),
+        ) => (
+            properties.get(name).map(|property| property.value.clone()),
+            *prototype,
+        ),
+        (
+            StaticHeapEntry::Array {
+                elements,
+                prototype,
+                ..
+            },
+            StaticPropertyKey::Index(index),
+        ) => (
+            elements.get(index).map(|property| property.value.clone()),
+            *prototype,
+        ),
+        (StaticHeapEntry::Function { properties, .. }, StaticPropertyKey::Name(name)) => (
+            properties.get(name).map(|property| property.value.clone()),
+            None,
+        ),
+        (StaticHeapEntry::Function { properties, .. }, StaticPropertyKey::Index(index)) => (
+            properties
+                .get(index.to_string().as_str())
+                .map(|property| property.value.clone()),
+            None,
+        ),
+    };
+    if value.is_some() {
+        return Ok(value);
     }
+    prototype.map_or(Ok(None), |prototype| {
+        static_lookup_property(heap, prototype, key, depth + 1)
+    })
 }
 
 fn static_error_name(kind: u32) -> &'static str {
@@ -2589,6 +3118,7 @@ fn static_put_property(
 ) -> Result<(), LlvmError> {
     let id = match base {
         RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
         _ => return Err(imported_error("property write base is not a static object")),
     };
     let entry = heap
@@ -2599,6 +3129,7 @@ fn static_put_property(
             StaticHeapEntry::Object {
                 properties,
                 property_order,
+                ..
             },
             StaticPropertyKey::Name(name),
         ) => {
@@ -2608,12 +3139,13 @@ fn static_put_property(
             if !properties.contains_key(&name) {
                 property_order.push(name.clone());
             }
-            properties.insert(name, value);
+            static_assign_property(properties, name, value)?;
         }
         (
             StaticHeapEntry::Object {
                 properties,
                 property_order,
+                ..
             },
             StaticPropertyKey::Index(index),
         ) => {
@@ -2621,7 +3153,7 @@ fn static_put_property(
             if !properties.contains_key(&name) {
                 property_order.push(name.clone());
             }
-            properties.insert(name, value);
+            static_assign_property(properties, name, value)?;
         }
         (
             StaticHeapEntry::Array {
@@ -2629,7 +3161,14 @@ fn static_put_property(
             },
             StaticPropertyKey::Index(index),
         ) => {
-            elements.insert(index, value);
+            if let Some(property) = elements.get_mut(&index) {
+                if !property.writable {
+                    return Err(imported_error("static array element is not writable"));
+                }
+                property.value = value;
+            } else {
+                elements.insert(index, StaticProperty::assigned(value));
+            }
             *length = (*length).max(index.saturating_add(1));
         }
         (StaticHeapEntry::Array { .. }, StaticPropertyKey::Name(name))
@@ -2650,10 +3189,226 @@ fn static_put_property(
             if !properties.contains_key(&name) {
                 property_order.push(name.clone());
             }
-            properties.insert(name, value);
+            static_assign_property(properties, name, value)?;
+        }
+        (
+            StaticHeapEntry::Function {
+                properties,
+                property_order,
+            },
+            StaticPropertyKey::Name(name),
+        ) => {
+            if !properties.contains_key(&name) {
+                property_order.push(name.clone());
+            }
+            static_assign_property(properties, name, value)?;
+        }
+        (
+            StaticHeapEntry::Function {
+                properties,
+                property_order,
+            },
+            StaticPropertyKey::Index(index),
+        ) => {
+            let name = index.to_string().into_boxed_str();
+            if !properties.contains_key(&name) {
+                property_order.push(name.clone());
+            }
+            static_assign_property(properties, name, value)?;
         }
     }
     Ok(())
+}
+
+fn static_assign_property(
+    properties: &mut BTreeMap<Box<str>, StaticProperty>,
+    name: Box<str>,
+    value: RegisterValue,
+) -> Result<(), LlvmError> {
+    if let Some(property) = properties.get_mut(&name) {
+        if !property.writable {
+            return Err(imported_error(format!(
+                "static property {name} is not writable"
+            )));
+        }
+        property.value = value;
+    } else {
+        properties.insert(name, StaticProperty::assigned(value));
+    }
+    Ok(())
+}
+
+fn static_define_data_property(
+    heap: &mut BTreeMap<u32, StaticHeapEntry>,
+    base: &RegisterValue,
+    key: StaticPropertyKey,
+    value: RegisterValue,
+    attributes: StaticDefinePropertyAttributes,
+) -> Result<(), LlvmError> {
+    if !attributes.has_value {
+        return Err(imported_error(
+            "data-property definition omits its value field",
+        ));
+    }
+    let id = match base {
+        RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
+        _ => {
+            return Err(imported_error(
+                "data-property definition base is not a static object",
+            ));
+        }
+    };
+    let entry = heap.get_mut(&id).ok_or_else(|| {
+        imported_error("data-property definition references a missing static heap entry")
+    })?;
+    let define = |properties: &mut BTreeMap<Box<str>, StaticProperty>,
+                  property_order: &mut Vec<Box<str>>,
+                  name: Box<str>,
+                  value: RegisterValue|
+     -> Result<(), LlvmError> {
+        if let Some(existing) = properties.get_mut(&name) {
+            if !existing.configurable {
+                if attributes.configurable == Some(true)
+                    || attributes
+                        .enumerable
+                        .is_some_and(|enumerable| enumerable != existing.enumerable)
+                    || (!existing.writable
+                        && (attributes.writable == Some(true) || existing.value != value))
+                {
+                    return Err(imported_error(format!(
+                        "invalid redefinition of non-configurable static property {name}"
+                    )));
+                }
+            }
+            existing.value = value;
+            if let Some(configurable) = attributes.configurable {
+                existing.configurable = configurable;
+            }
+            if let Some(enumerable) = attributes.enumerable {
+                existing.enumerable = enumerable;
+            }
+            if let Some(writable) = attributes.writable {
+                existing.writable = writable;
+            }
+        } else {
+            property_order.push(name.clone());
+            properties.insert(
+                name,
+                StaticProperty {
+                    value,
+                    configurable: attributes.configurable.unwrap_or(false),
+                    enumerable: attributes.enumerable.unwrap_or(false),
+                    writable: attributes.writable.unwrap_or(false),
+                },
+            );
+        }
+        Ok(())
+    };
+    match (entry, key) {
+        (
+            StaticHeapEntry::Object {
+                properties,
+                property_order,
+                ..
+            }
+            | StaticHeapEntry::Function {
+                properties,
+                property_order,
+            },
+            StaticPropertyKey::Name(name),
+        ) => define(properties, property_order, name, value),
+        (
+            StaticHeapEntry::Object {
+                properties,
+                property_order,
+                ..
+            }
+            | StaticHeapEntry::Function {
+                properties,
+                property_order,
+            },
+            StaticPropertyKey::Index(index),
+        ) => define(
+            properties,
+            property_order,
+            index.to_string().into_boxed_str(),
+            value,
+        ),
+        (
+            StaticHeapEntry::Array {
+                elements, length, ..
+            },
+            StaticPropertyKey::Index(index),
+        ) => {
+            if let Some(existing) = elements.get_mut(&index) {
+                if !existing.configurable
+                    && (attributes.configurable == Some(true)
+                        || attributes
+                            .enumerable
+                            .is_some_and(|enumerable| enumerable != existing.enumerable)
+                        || (!existing.writable
+                            && (attributes.writable == Some(true) || existing.value != value)))
+                {
+                    return Err(imported_error(
+                        "invalid redefinition of a non-configurable static array element",
+                    ));
+                }
+                existing.value = value;
+                if let Some(configurable) = attributes.configurable {
+                    existing.configurable = configurable;
+                }
+                if let Some(enumerable) = attributes.enumerable {
+                    existing.enumerable = enumerable;
+                }
+                if let Some(writable) = attributes.writable {
+                    existing.writable = writable;
+                }
+            } else {
+                elements.insert(
+                    index,
+                    StaticProperty {
+                        value,
+                        configurable: attributes.configurable.unwrap_or(false),
+                        enumerable: attributes.enumerable.unwrap_or(false),
+                        writable: attributes.writable.unwrap_or(false),
+                    },
+                );
+                *length = (*length).max(index.saturating_add(1));
+            }
+            Ok(())
+        }
+        (StaticHeapEntry::Array { .. }, StaticPropertyKey::Name(name))
+            if name.as_ref() == "length" =>
+        {
+            Err(imported_error(
+                "static array length definition is not admitted",
+            ))
+        }
+        (
+            StaticHeapEntry::Array {
+                properties,
+                property_order,
+                ..
+            },
+            StaticPropertyKey::Name(name),
+        ) => define(properties, property_order, name, value),
+    }
+}
+
+fn static_remove_property(
+    properties: &mut BTreeMap<Box<str>, StaticProperty>,
+    name: &str,
+) -> Result<bool, LlvmError> {
+    if properties
+        .get(name)
+        .is_some_and(|property| !property.configurable)
+    {
+        return Err(imported_error(format!(
+            "static property {name} is not configurable"
+        )));
+    }
+    Ok(properties.remove(name).is_some())
 }
 
 fn static_has_property(
@@ -2664,41 +3419,19 @@ fn static_has_property(
     let (id, is_array) = match base {
         RegisterValue::Object(id) => (*id, false),
         RegisterValue::Array(id) => (*id, true),
+        RegisterValue::Function { heap_id, .. } => (*heap_id, false),
         _ => {
             return Err(imported_error(
                 "property membership base is not a static object",
             ));
         }
     };
-    let entry = heap.get(&id).ok_or_else(|| {
-        imported_error("property membership references a missing static heap entry")
-    })?;
-    match (entry, key) {
-        (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Name(name)) => {
-            if properties.contains_key(&name) {
-                Ok(true)
-            } else {
-                missing_static_property(&name, is_array).map(|_| false)
-            }
-        }
-        (StaticHeapEntry::Object { properties, .. }, StaticPropertyKey::Index(index)) => {
-            Ok(properties.contains_key(index.to_string().as_str()))
-        }
-        (StaticHeapEntry::Array { elements, .. }, StaticPropertyKey::Index(index)) => {
-            Ok(elements.contains_key(&index))
-        }
-        (StaticHeapEntry::Array { .. }, StaticPropertyKey::Name(name))
-            if name.as_ref() == "length" =>
-        {
-            Ok(true)
-        }
-        (StaticHeapEntry::Array { properties, .. }, StaticPropertyKey::Name(name)) => {
-            if properties.contains_key(&name) {
-                Ok(true)
-            } else {
-                missing_static_property(&name, is_array).map(|_| false)
-            }
-        }
+    if static_lookup_property(heap, id, &key, 0)?.is_some() {
+        return Ok(true);
+    }
+    match key {
+        StaticPropertyKey::Name(name) => missing_static_property(&name, is_array).map(|_| false),
+        StaticPropertyKey::Index(_) => Ok(false),
     }
 }
 
@@ -2709,6 +3442,7 @@ fn static_has_own_property(
 ) -> Result<bool, LlvmError> {
     let id = match base {
         RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
         _ => {
             return Err(imported_error(
                 "own-property membership base is not a static object",
@@ -2736,6 +3470,12 @@ fn static_has_own_property(
         (StaticHeapEntry::Array { properties, .. }, StaticPropertyKey::Name(name)) => {
             properties.contains_key(&name)
         }
+        (StaticHeapEntry::Function { properties, .. }, StaticPropertyKey::Name(name)) => {
+            properties.contains_key(&name)
+        }
+        (StaticHeapEntry::Function { properties, .. }, StaticPropertyKey::Index(index)) => {
+            properties.contains_key(index.to_string().as_str())
+        }
     })
 }
 
@@ -2746,6 +3486,7 @@ fn static_delete_property(
 ) -> Result<(), LlvmError> {
     let id = match base {
         RegisterValue::Object(id) | RegisterValue::Array(id) => *id,
+        RegisterValue::Function { heap_id, .. } => *heap_id,
         _ => {
             return Err(imported_error(
                 "property delete base is not a static object",
@@ -2760,10 +3501,11 @@ fn static_delete_property(
             StaticHeapEntry::Object {
                 properties,
                 property_order,
+                ..
             },
             StaticPropertyKey::Name(name),
         ) => {
-            if properties.remove(&name).is_some() {
+            if static_remove_property(properties, &name)? {
                 property_order.retain(|ordered| ordered != &name);
             }
         }
@@ -2771,15 +3513,22 @@ fn static_delete_property(
             StaticHeapEntry::Object {
                 properties,
                 property_order,
+                ..
             },
             StaticPropertyKey::Index(index),
         ) => {
             let name = index.to_string();
-            if properties.remove(name.as_str()).is_some() {
+            if static_remove_property(properties, name.as_str())? {
                 property_order.retain(|ordered| ordered.as_ref() != name);
             }
         }
         (StaticHeapEntry::Array { elements, .. }, StaticPropertyKey::Index(index)) => {
+            if elements
+                .get(&index)
+                .is_some_and(|property| !property.configurable)
+            {
+                return Err(imported_error("static array element is not configurable"));
+            }
             elements.remove(&index);
         }
         (StaticHeapEntry::Array { .. }, StaticPropertyKey::Name(name))
@@ -2795,8 +3544,31 @@ fn static_delete_property(
             },
             StaticPropertyKey::Name(name),
         ) => {
-            if properties.remove(&name).is_some() {
+            if static_remove_property(properties, &name)? {
                 property_order.retain(|ordered| ordered != &name);
+            }
+        }
+        (
+            StaticHeapEntry::Function {
+                properties,
+                property_order,
+            },
+            StaticPropertyKey::Name(name),
+        ) => {
+            if static_remove_property(properties, &name)? {
+                property_order.retain(|ordered| ordered != &name);
+            }
+        }
+        (
+            StaticHeapEntry::Function {
+                properties,
+                property_order,
+            },
+            StaticPropertyKey::Index(index),
+        ) => {
+            let name = index.to_string();
+            if static_remove_property(properties, name.as_str())? {
+                property_order.retain(|ordered| ordered.as_ref() != name);
             }
         }
     }

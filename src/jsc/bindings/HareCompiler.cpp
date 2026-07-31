@@ -496,24 +496,34 @@ static ImportResult materializeChildren(
             ? parentBlock->functionDecl(static_cast<int>(index))
             : parentBlock->functionExpr(static_cast<int>(index));
         auto source = executable->linkedSourceCode(parentRecord->source);
-        auto codeKind = executable->isConstructor()
-            ? JSC::CodeSpecializationKind::CodeForConstruct
-            : JSC::CodeSpecializationKind::CodeForCall;
-        JSC::ParserError parserError;
-        auto* child = executable->unlinkedCodeBlockFor(
-            vm, source, codeKind, parentBlock->codeGenerationMode(), parserError,
-            executable->parseMode());
-        if (parserError.isValid())
-            return emitParserError(visitorContext, parserError);
-        if (!child)
-            return result(ImportStatus::NullRoot, 1);
+        auto materializeSpecialization = [&](
+            JSC::CodeSpecializationKind codeKind,
+            Specialization specialization) -> ImportResult {
+            JSC::ParserError parserError;
+            auto* child = executable->unlinkedCodeBlockFor(
+                vm, source, codeKind, parentBlock->codeGenerationMode(), parserError,
+                executable->parseMode());
+            if (parserError.isValid())
+                return emitParserError(visitorContext, parserError);
+            if (!child)
+                return result(ImportStatus::NullRoot, 1);
 
-        uint32_t childId = static_cast<uint32_t>(records.size());
-        records.append(std::make_unique<FunctionRecord>(
-            vm, child, source, parentId,
-            declaration ? Relation::Declaration : Relation::Expression, index,
-            executable->isConstructor() ? Specialization::Construct : Specialization::Call));
-        return materializeChildren(vm, records, childId, visitorContext);
+            uint32_t childId = static_cast<uint32_t>(records.size());
+            records.append(std::make_unique<FunctionRecord>(
+                vm, child, source, parentId,
+                declaration ? Relation::Declaration : Relation::Expression, index,
+                specialization));
+            return materializeChildren(vm, records, childId, visitorContext);
+        };
+
+        auto importResult = materializeSpecialization(
+            JSC::CodeSpecializationKind::CodeForCall, Specialization::Call);
+        if (importResult.status != ImportStatus::Success)
+            return importResult;
+        if (executable->constructAbility() == JSC::ConstructAbility::CanConstruct)
+            return materializeSpecialization(
+                JSC::CodeSpecializationKind::CodeForConstruct, Specialization::Construct);
+        return result(ImportStatus::Success);
     };
 
     for (uint32_t index = 0; index < declarationCount; ++index) {
